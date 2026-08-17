@@ -1,0 +1,87 @@
+.app {
+  width: 100%;
+  max-width: 860px;
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+
+/* ── hero ── */
+.hero {
+  text-align: center;
+  padding: 2.5rem 1rem 1rem;
+}
+.hero h1 {
+  font-size: 2rem;
+  font-weight: 700;
+  background: linear-gradient(135deg, #38bdf8, #818cf8);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.subtitle {
+  margin-top: 0.5rem;
+  color: #94a3b8;
+  font-size: 0.95rem;
+}
+
+/* ── status card ── */
+.status-card {
+  background: #1e293b;
+  border-radius: 12px;
+  padding: 1.5rem 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+.status-card h2 {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.badge {
+  display: inline-block;
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
+  font-weight: 500;
+  font-size: 0.9rem;
+}
+.badge.ok      { background: #052e16; color: #4ade80; border: 1px solid #16a34a; }
+.badge.err     { background: #2a0a0a; color: #f87171; border: 1px solid #dc2626; }
+.badge.loading { background: #1e3a5f; color: #93c5fd; border: 1px solid #3b82f6; }
+
+/* ── sensor grid ── */
+.info-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 1rem;
+}
+.info-card {
+  background: #1e293b;
+  border-radius: 10px;
+  padding: 1.2rem 1rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+  text-align: center;
+  transition: transform 0.15s ease;
+}
+.info-card:hover { transform: translateY(-3px); }
+.info-card .icon { font-size: 1.6rem; }
+.info-card strong { font-size: 0.85rem; color: #cbd5e1; }
+.info-card span   { font-size: 0.78rem; color: #64748b; }
+
+/* ── footer ── */
+.footer {
+  text-align: center;
+  color: #475569;
+  font-size: 0.8rem;
+  padding-bottom: 2rem;
+}
+.footer code {
+  color: #7dd3fc;
+  font-size: 0.8rem;
+}

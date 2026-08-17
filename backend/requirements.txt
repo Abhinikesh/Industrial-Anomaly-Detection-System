@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+python-multipart
+pymongo
+python-dotenv
+numpy
+pandas
+scikit-learn
+torch
+matplotlib
+seaborn
