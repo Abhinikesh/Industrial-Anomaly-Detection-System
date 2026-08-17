@@ -1,4 +1,5 @@
 fastapi
+requests
 uvicorn[standard]
 python-multipart
 pymongo
@@ -6,6 +7,7 @@ python-dotenv
 numpy
 pandas
 scikit-learn
+joblib
 torch
 matplotlib
 seaborn

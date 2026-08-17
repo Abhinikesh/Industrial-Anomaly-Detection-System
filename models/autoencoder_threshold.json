@@ -1,0 +1,11 @@
+{
+  "threshold": 0.6201126011472122,
+  "threshold_sigma": 2,
+  "features": [
+    "Air temperature [K]",
+    "Process temperature [K]",
+    "Rotational speed [rpm]",
+    "Torque [Nm]",
+    "Tool wear [min]"
+  ]
+}
