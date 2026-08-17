@@ -43,42 +43,75 @@ class SensorAutoencoder(nn.Module):
         return self.decoder(self.encoder(x))
 
 
-# ── load once ──────────────────────────────────────────────────────────────────
+# ── load once with explicit error reporting ────────────────────────────────────
 
-def _load_models():
+_iso = None
+_scaler = None
+_ae = None
+_ae_threshold = None
+_models_ready = False
+_model_error_msg = ""
+
+
+def load_models_safely():
+    global _iso, _scaler, _ae, _ae_threshold, _models_ready, _model_error_msg
+
     iso_path    = os.path.join(MODEL_DIR, "isolation_forest.pkl")
     scaler_path = os.path.join(MODEL_DIR, "scaler.pkl")
     ae_path     = os.path.join(MODEL_DIR, "autoencoder.pt")
     thresh_path = os.path.join(MODEL_DIR, "autoencoder_threshold.json")
 
-    missing = [p for p in [iso_path, scaler_path, ae_path, thresh_path]
-               if not os.path.exists(p)]
+    missing = []
+    if not os.path.exists(iso_path):
+        missing.append(f"Isolation Forest: {iso_path}")
+    if not os.path.exists(scaler_path):
+        missing.append(f"Scaler: {scaler_path}")
+    if not os.path.exists(ae_path):
+        missing.append(f"Autoencoder Weights: {ae_path}")
+    if not os.path.exists(thresh_path):
+        missing.append(f"Autoencoder Threshold: {thresh_path}")
+
     if missing:
-        raise FileNotFoundError(
-            f"Missing model files — run the training scripts first:\n"
-            + "\n".join(f"  {p}" for p in missing)
-        )
+        _models_ready = False
+        _model_error_msg = "Missing model files. Run `python ml/train_isolation_forest.py` and `python ml/train_autoencoder.py`."
+        print("\n" + "=" * 70)
+        print("⚠️  [ANOMALY SERVICE WARNING] Model files not found in models/ directory!")
+        print("Missing required artifacts:")
+        for m in missing:
+            print(f"  - {m}")
+        print("\nTo generate and save all model artifacts, run:")
+        print("  cd backend")
+        print("  python ml/train_isolation_forest.py")
+        print("  python ml/train_autoencoder.py")
+        print("=" * 70 + "\n")
+        return False
 
-    iso    = joblib.load(iso_path)
-    scaler = joblib.load(scaler_path)
+    try:
+        _iso    = joblib.load(iso_path)
+        _scaler = joblib.load(scaler_path)
 
-    ae = SensorAutoencoder(n_features=5)
-    ae.load_state_dict(torch.load(ae_path, map_location="cpu", weights_only=True))
-    ae.eval()
+        ae_model = SensorAutoencoder(n_features=5)
+        ae_model.load_state_dict(torch.load(ae_path, map_location="cpu", weights_only=True))
+        ae_model.eval()
+        _ae = ae_model
 
-    with open(thresh_path) as f:
-        thresh_cfg = json.load(f)
-    ae_threshold = thresh_cfg["threshold"]
+        with open(thresh_path) as f:
+            thresh_cfg = json.load(f)
+        _ae_threshold = thresh_cfg["threshold"]
 
-    return iso, scaler, ae, ae_threshold
+        _models_ready = True
+        _model_error_msg = ""
+        print("[anomaly_service] ✓ All models (Isolation Forest + Autoencoder) successfully loaded.")
+        return True
+    except Exception as err:
+        _models_ready = False
+        _model_error_msg = f"Error loading models: {err}"
+        print(f"[anomaly_service] ⚠️ Error loading models: {err}")
+        return False
 
 
-try:
-    _iso, _scaler, _ae, _ae_threshold = _load_models()
-    _models_ready = True
-except FileNotFoundError as e:
-    print(f"[anomaly_service] WARNING: {e}")
-    _models_ready = False
+# Initial load at module import
+load_models_safely()
 
 
 # ── scoring ────────────────────────────────────────────────────────────────────
@@ -86,49 +119,58 @@ except FileNotFoundError as e:
 def score_reading(payload: dict) -> dict:
     """
     Takes a dict with the 5 sensor values, returns scores + flags from both models.
-    Falls back to placeholder zeros if models aren't loaded yet.
+    If models aren't ready, returns a fallback dictionary with model_warning.
     """
     if not _models_ready:
         return {
-            "iso_score": 0.0, "iso_flag": 0,
-            "ae_score":  0.0, "ae_flag":  0,
+            "iso_score": 0.0,
+            "iso_flag": 0,
+            "ae_score":  0.0,
+            "ae_flag":   0,
             "is_anomaly": False,
+            "model_warning": _model_error_msg or "Models not loaded. Train models before scoring.",
         }
 
-    # extract in the same order the scaler was fit on
-    raw = np.array([[
-        payload["air_temp"],
-        payload["process_temp"],
-        payload["rpm"],
-        payload["torque"],
-        payload["tool_wear"],
-    ]])
+    try:
+        raw = np.array([[
+            payload["air_temp"],
+            payload["process_temp"],
+            payload["rpm"],
+            payload["torque"],
+            payload["tool_wear"],
+        ]])
 
-    X = _scaler.transform(raw)
+        X = _scaler.transform(raw)
 
-    # Isolation Forest: score_samples returns negative path length;
-    # we negate so higher = more anomalous; predict() → -1 means anomaly
-    iso_raw_score = float(-_iso.score_samples(X)[0])
-    iso_pred      = _iso.predict(X)[0]       # -1 or +1
-    iso_flag      = 1 if iso_pred == -1 else 0
+        # Isolation Forest scoring
+        iso_raw_score = float(-_iso.score_samples(X)[0])
+        iso_pred      = _iso.predict(X)[0]       # -1 or +1
+        iso_flag      = 1 if iso_pred == -1 else 0
 
-    # Autoencoder: row-wise MSE between original and reconstruction
-    t      = torch.tensor(X, dtype=torch.float32)
-    with torch.no_grad():
-        recon = _ae(t).numpy()
-    ae_score = float(np.mean((X - recon) ** 2))
-    ae_flag  = 1 if ae_score > _ae_threshold else 0
+        # Autoencoder scoring
+        t = torch.tensor(X, dtype=torch.float32)
+        with torch.no_grad():
+            recon = _ae(t).numpy()
+        ae_score = float(np.mean((X - recon) ** 2))
+        ae_flag  = 1 if ae_score > _ae_threshold else 0
 
-    # OR logic: flag as anomaly if *either* model says so.
-    # This maximises recall — we'd rather check a false alarm than miss a
-    # real failure.  The trade-off is slightly more noise in the alert feed,
-    # which is acceptable in an industrial safety context.
-    is_anomaly = bool(iso_flag or ae_flag)
+        # Union ensemble logic (OR)
+        is_anomaly = bool(iso_flag or ae_flag)
 
-    return {
-        "iso_score":  round(iso_raw_score, 5),
-        "iso_flag":   iso_flag,
-        "ae_score":   round(ae_score, 5),
-        "ae_flag":    ae_flag,
-        "is_anomaly": is_anomaly,
-    }
+        return {
+            "iso_score":  round(iso_raw_score, 5),
+            "iso_flag":   iso_flag,
+            "ae_score":   round(ae_score, 5),
+            "ae_flag":    ae_flag,
+            "is_anomaly": is_anomaly,
+        }
+    except Exception as e:
+        print(f"[anomaly_service] Scoring exception: {e}")
+        return {
+            "iso_score": 0.0,
+            "iso_flag": 0,
+            "ae_score": 0.0,
+            "ae_flag": 0,
+            "is_anomaly": False,
+            "model_warning": f"Scoring failure: {e}",
+        }

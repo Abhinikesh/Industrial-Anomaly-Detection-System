@@ -1,24 +1,29 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+import os
 
 from app.routes.ingest import router as ingest_router
-from app.services.reading_service import (
-    get_recent_readings,
-    get_anomalies,
-    get_reading_stats,
-)
+from app.routes.readings import router as readings_router
 
 app = FastAPI(title="Industrial Anomaly Detection API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 app.include_router(ingest_router)
+app.include_router(readings_router)
+
+# Mount results directory to serve static evaluation plots
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+RESULTS_DIR = os.path.join(BASE_DIR, "../../results")
+if os.path.exists(RESULTS_DIR):
+    app.mount("/results", StaticFiles(directory=RESULTS_DIR), name="results")
 
 
 @app.get("/")
@@ -29,18 +34,3 @@ def root():
 @app.get("/health")
 def health():
     return {"status": "ok"}
-
-
-@app.get("/readings/recent")
-def recent_readings(limit: int = 100):
-    return get_recent_readings(limit)
-
-
-@app.get("/readings/anomalies")
-def anomaly_readings(limit: int = 200):
-    return get_anomalies(limit)
-
-
-@app.get("/readings/stats")
-def reading_stats():
-    return get_reading_stats()

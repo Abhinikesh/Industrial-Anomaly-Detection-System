@@ -8,7 +8,7 @@ Row order: we keep the ORIGINAL dataset order rather than shuffling.
     Preserving order means the simulator shows realistic wear progression,
     which makes the demo more meaningful than random jumps.
   - The loop cycles back to row 0 when it reaches the end, so the demo
-    runs indefinitely.
+    runs indefinitely without crashing or duplicate key collisions.
 
 Usage:
   python simulator.py              # 1 second between readings (default)
@@ -55,7 +55,7 @@ def build_payload(row):
     """Package one dataset row into the dict the /ingest endpoint expects."""
     return {
         "timestamp":   datetime.now(timezone.utc).isoformat(),
-        "machine_id":  row.get("Product ID", "SIM-001"),
+        "machine_id":  str(row.get("Product ID", "SIM-001")),
         "air_temp":    float(row["Air temperature [K]"]),
         "process_temp":float(row["Process temperature [K]"]),
         "rpm":         float(row["Rotational speed [rpm]"]),
@@ -66,56 +66,73 @@ def build_payload(row):
     }
 
 
-def log_line(i, payload, resp_ok, elapsed_ms):
+def log_line(i, payload, resp_ok, elapsed_ms, model_info=None):
     ts_short   = datetime.now().strftime("%H:%M:%S")
-    failure_tag = " ⚠ FAILURE" if payload["true_failure"] else ""
-    status_tag  = "✓" if resp_ok else "✗"
+    failure_tag = " [TRUE FAILURE]" if payload["true_failure"] else ""
+    status_tag  = "✓ OK" if resp_ok else "✗ FAIL"
+    anomaly_tag = " ⚠ ANOMALY" if model_info and model_info.get("is_anomaly") else ""
+    
     print(
-        f"[{ts_short}]  row {i:>5}  "
-        f"T={payload['air_temp']:.1f}K  "
-        f"RPM={payload['rpm']:.0f}  "
-        f"Torque={payload['torque']:.1f}Nm  "
+        f"[{ts_short}]  Row {i:>5} | "
+        f"T={payload['air_temp']:.1f}K "
+        f"RPM={payload['rpm']:.0f} "
+        f"Torque={payload['torque']:.1f}Nm "
         f"Wear={payload['tool_wear']:.0f}min"
-        f"{failure_tag}  "
-        f"→ {status_tag} {elapsed_ms:.0f}ms"
+        f"{anomaly_tag}{failure_tag} "
+        f"→ {status_tag} ({elapsed_ms:.0f}ms)"
     )
 
 
 def stream_readings(df, delay):
     """
     Infinite loop: iterate through the dataset, POST each row, sleep, repeat.
-    Ctrl-C exits cleanly.
+    Handles backend connection loss cleanly with automatic retry.
     """
-    n        = len(df)
-    cycle    = 0
-    row_idx  = 0
+    n = len(df)
+    cycle = 0
+    row_idx = 0
+    consecutive_errors = 0
 
-    print(f"Streaming to {INGEST_URL}  (delay={delay}s, Ctrl-C to stop)\n")
+    print(f"Streaming to {INGEST_URL} (cadence: {delay}s per packet, Ctrl-C to stop)\n")
 
     while True:
-        row     = df.iloc[row_idx]
+        row = df.iloc[row_idx]
         payload = build_payload(row)
 
         t0 = time.perf_counter()
+        resp_ok = False
+        model_info = None
+
         try:
-            resp    = requests.post(INGEST_URL, json=payload, timeout=5)
-            resp_ok = resp.status_code == 200
-        except requests.exceptions.ConnectionError:
-            resp_ok = False
-            # don't spam the console if the backend isn't up yet
-            if row_idx == 0:
-                print("  Backend not reachable — start FastAPI first (uvicorn app.main:app --reload)")
-        except requests.exceptions.Timeout:
-            resp_ok = False
+            resp = requests.post(INGEST_URL, json=payload, timeout=4)
+            if resp.status_code == 200:
+                resp_ok = True
+                model_info = resp.json()
+                if consecutive_errors > 0:
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Connection to backend restored. Resuming stream.")
+                    consecutive_errors = 0
+            else:
+                consecutive_errors += 1
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] ⚠ Backend returned HTTP {resp.status_code}")
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+            consecutive_errors += 1
+            if consecutive_errors == 1:
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] ⚠ Backend unreachable on :8000. Retrying in background...")
+            elif consecutive_errors % 10 == 0:
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] ⚠ Still waiting for backend (:8000)... ({consecutive_errors} failed attempts)")
+            
+            # Back off slightly while backend is offline to prevent hammering
+            time.sleep(2.0)
+            continue
 
         elapsed_ms = (time.perf_counter() - t0) * 1000
-        log_line(row_idx, payload, resp_ok, elapsed_ms)
+        log_line(row_idx, payload, resp_ok, elapsed_ms, model_info)
 
         row_idx += 1
         if row_idx >= n:
             row_idx = 0
-            cycle  += 1
-            print(f"\n--- cycle {cycle} complete, looping back to row 0 ---\n")
+            cycle += 1
+            print(f"\n--- [Cycle {cycle} Completed: looped back to row 0, no duplicate collisions] ---\n")
 
         time.sleep(delay)
 
@@ -144,17 +161,17 @@ def main():
 
     if args.fast:
         delay = 0.2
-        print("Fast mode — 0.2s delay")
+        print("Fast mode active — 0.2s delay")
     elif args.delay is not None:
         delay = args.delay
-        print(f"Custom delay — {delay}s")
+        print(f"Custom delay active — {delay}s")
 
     df = load_dataset()
 
     try:
         stream_readings(df, delay)
     except KeyboardInterrupt:
-        print("\nSimulator stopped.")
+        print("\n[Simulator safely stopped by user.]")
 
 
 if __name__ == "__main__":
