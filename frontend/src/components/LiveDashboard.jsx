@@ -82,7 +82,7 @@ export default function LiveDashboard() {
       setAnomalies(anomaliesRes.data);
       setFetchError(null);
     } catch (err) {
-      setFetchError("Unable to connect to backend on :8000. Is FastAPI running?");
+      setFetchError("Connection lost to backend on :8000. Retrying live stream in background...");
     } finally {
       setInitialLoading(false);
     }
@@ -108,6 +108,8 @@ export default function LiveDashboard() {
       </div>
     );
   }
+
+  const isEmptyDatabase = readings.length === 0 && !fetchError;
 
   return (
     <div className="dashboard-container">
@@ -152,7 +154,17 @@ export default function LiveDashboard() {
         </div>
       </div>
 
-      {fetchError && <div className="alert-box error">{fetchError}</div>}
+      {fetchError && (
+        <div className="alert-box error">
+          <span>⚠️ {fetchError}</span>
+        </div>
+      )}
+
+      {isEmptyDatabase && (
+        <div className="alert-box info">
+          <span>ℹ️ <strong>Fresh Database Detected:</strong> No sensor readings ingested yet. Run <code>python ml/simulator.py</code> to start streaming data.</span>
+        </div>
+      )}
 
       {/* Summary KPI Cards */}
       <div className="kpi-grid">
@@ -217,33 +229,37 @@ export default function LiveDashboard() {
             <span className="badge-legend">Dual Sensor</span>
           </div>
           <div className="chart-wrapper">
-            <ResponsiveContainer width="100%" height={240}>
-              <LineChart data={readings} margin={{ top: 15, right: 20, left: -10, bottom: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#253248" />
-                <XAxis dataKey="displayTime" stroke="#64748b" tick={{ fontSize: 11 }} />
-                <YAxis domain={["auto", "auto"]} stroke="#64748b" tick={{ fontSize: 11 }} />
-                <Tooltip content={<CustomTooltip />} />
-                <Legend wrapperStyle={{ fontSize: "12px", paddingTop: "8px" }} />
-                <Line
-                  type="monotone"
-                  dataKey="air_temp"
-                  name="Air Temp (K)"
-                  stroke="#38bdf8"
-                  strokeWidth={2.5}
-                  dot={<AnomalyDot />}
-                  isAnimationActive={false}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="process_temp"
-                  name="Process Temp (K)"
-                  stroke="#f97316"
-                  strokeWidth={2.5}
-                  dot={false}
-                  isAnimationActive={false}
-                />
-              </LineChart>
-            </ResponsiveContainer>
+            {isEmptyDatabase ? (
+              <div className="chart-empty-state">Waiting for sensor stream...</div>
+            ) : (
+              <ResponsiveContainer width="100%" height={240}>
+                <LineChart data={readings} margin={{ top: 15, right: 20, left: -10, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#253248" />
+                  <XAxis dataKey="displayTime" stroke="#64748b" tick={{ fontSize: 11 }} />
+                  <YAxis domain={["auto", "auto"]} stroke="#64748b" tick={{ fontSize: 11 }} />
+                  <Tooltip content={<CustomTooltip />} />
+                  <Legend wrapperStyle={{ fontSize: "12px", paddingTop: "8px" }} />
+                  <Line
+                    type="monotone"
+                    dataKey="air_temp"
+                    name="Air Temp (K)"
+                    stroke="#38bdf8"
+                    strokeWidth={2.5}
+                    dot={<AnomalyDot />}
+                    isAnimationActive={false}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="process_temp"
+                    name="Process Temp (K)"
+                    stroke="#f97316"
+                    strokeWidth={2.5}
+                    dot={false}
+                    isAnimationActive={false}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            )}
           </div>
         </div>
 
@@ -257,36 +273,40 @@ export default function LiveDashboard() {
             <span className="badge-legend">Dual Axis</span>
           </div>
           <div className="chart-wrapper">
-            <ResponsiveContainer width="100%" height={240}>
-              <LineChart data={readings} margin={{ top: 15, right: 20, left: -10, bottom: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#253248" />
-                <XAxis dataKey="displayTime" stroke="#64748b" tick={{ fontSize: 11 }} />
-                <YAxis yAxisId="rpm" domain={["auto", "auto"]} stroke="#a855f7" tick={{ fontSize: 11 }} />
-                <YAxis yAxisId="torque" orientation="right" domain={["auto", "auto"]} stroke="#34d399" tick={{ fontSize: 11 }} />
-                <Tooltip content={<CustomTooltip />} />
-                <Legend wrapperStyle={{ fontSize: "12px", paddingTop: "8px" }} />
-                <Line
-                  yAxisId="rpm"
-                  type="monotone"
-                  dataKey="rpm"
-                  name="Speed (RPM)"
-                  stroke="#a855f7"
-                  strokeWidth={2.5}
-                  dot={<AnomalyDot />}
-                  isAnimationActive={false}
-                />
-                <Line
-                  yAxisId="torque"
-                  type="monotone"
-                  dataKey="torque"
-                  name="Torque (Nm)"
-                  stroke="#34d399"
-                  strokeWidth={2.5}
-                  dot={false}
-                  isAnimationActive={false}
-                />
-              </LineChart>
-            </ResponsiveContainer>
+            {isEmptyDatabase ? (
+              <div className="chart-empty-state">Waiting for sensor stream...</div>
+            ) : (
+              <ResponsiveContainer width="100%" height={240}>
+                <LineChart data={readings} margin={{ top: 15, right: 20, left: -10, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#253248" />
+                  <XAxis dataKey="displayTime" stroke="#64748b" tick={{ fontSize: 11 }} />
+                  <YAxis yAxisId="rpm" domain={["auto", "auto"]} stroke="#a855f7" tick={{ fontSize: 11 }} />
+                  <YAxis yAxisId="torque" orientation="right" domain={["auto", "auto"]} stroke="#34d399" tick={{ fontSize: 11 }} />
+                  <Tooltip content={<CustomTooltip />} />
+                  <Legend wrapperStyle={{ fontSize: "12px", paddingTop: "8px" }} />
+                  <Line
+                    yAxisId="rpm"
+                    type="monotone"
+                    dataKey="rpm"
+                    name="Speed (RPM)"
+                    stroke="#a855f7"
+                    strokeWidth={2.5}
+                    dot={<AnomalyDot />}
+                    isAnimationActive={false}
+                  />
+                  <Line
+                    yAxisId="torque"
+                    type="monotone"
+                    dataKey="torque"
+                    name="Torque (Nm)"
+                    stroke="#34d399"
+                    strokeWidth={2.5}
+                    dot={false}
+                    isAnimationActive={false}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            )}
           </div>
         </div>
 
@@ -300,24 +320,28 @@ export default function LiveDashboard() {
             <span className="badge-legend">Wear Rate</span>
           </div>
           <div className="chart-wrapper">
-            <ResponsiveContainer width="100%" height={230}>
-              <LineChart data={readings} margin={{ top: 15, right: 20, left: -10, bottom: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#253248" />
-                <XAxis dataKey="displayTime" stroke="#64748b" tick={{ fontSize: 11 }} />
-                <YAxis domain={["auto", "auto"]} stroke="#64748b" tick={{ fontSize: 11 }} />
-                <Tooltip content={<CustomTooltip />} />
-                <Legend wrapperStyle={{ fontSize: "12px", paddingTop: "8px" }} />
-                <Line
-                  type="monotone"
-                  dataKey="tool_wear"
-                  name="Tool Wear (min)"
-                  stroke="#fbbf24"
-                  strokeWidth={2.5}
-                  dot={<AnomalyDot />}
-                  isAnimationActive={false}
-                />
-              </LineChart>
-            </ResponsiveContainer>
+            {isEmptyDatabase ? (
+              <div className="chart-empty-state">Waiting for sensor stream...</div>
+            ) : (
+              <ResponsiveContainer width="100%" height={230}>
+                <LineChart data={readings} margin={{ top: 15, right: 20, left: -10, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#253248" />
+                  <XAxis dataKey="displayTime" stroke="#64748b" tick={{ fontSize: 11 }} />
+                  <YAxis domain={["auto", "auto"]} stroke="#64748b" tick={{ fontSize: 11 }} />
+                  <Tooltip content={<CustomTooltip />} />
+                  <Legend wrapperStyle={{ fontSize: "12px", paddingTop: "8px" }} />
+                  <Line
+                    type="monotone"
+                    dataKey="tool_wear"
+                    name="Tool Wear (min)"
+                    stroke="#fbbf24"
+                    strokeWidth={2.5}
+                    dot={<AnomalyDot />}
+                    isAnimationActive={false}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            )}
           </div>
         </div>
       </div>
@@ -351,7 +375,7 @@ export default function LiveDashboard() {
               {anomalies.length === 0 ? (
                 <tr>
                   <td colSpan="9" className="text-center dim py-5">
-                    No anomalies recorded yet. Running in nominal state.
+                    {isEmptyDatabase ? "No sensor readings recorded yet." : "No anomalies recorded. System operating in nominal state."}
                   </td>
                 </tr>
               ) : (

@@ -10,6 +10,7 @@ import os
 import json
 import joblib
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 
@@ -132,15 +133,15 @@ def score_reading(payload: dict) -> dict:
         }
 
     try:
-        raw = np.array([[
-            payload["air_temp"],
-            payload["process_temp"],
-            payload["rpm"],
-            payload["torque"],
-            payload["tool_wear"],
-        ]])
+        raw_df = pd.DataFrame([{
+            "Air temperature [K]":     payload["air_temp"],
+            "Process temperature [K]": payload["process_temp"],
+            "Rotational speed [rpm]":  payload["rpm"],
+            "Torque [Nm]":             payload["torque"],
+            "Tool wear [min]":         payload["tool_wear"],
+        }])
 
-        X = _scaler.transform(raw)
+        X = _scaler.transform(raw_df)
 
         # Isolation Forest scoring
         iso_raw_score = float(-_iso.score_samples(X)[0])

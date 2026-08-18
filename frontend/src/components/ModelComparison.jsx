@@ -17,7 +17,7 @@ export default function ModelComparison() {
       setLastRefreshed(new Date().toLocaleTimeString());
       setError(null);
     } catch (err) {
-      setError("Failed to fetch live model comparison data. Ensure backend is running on :8000.");
+      setError("Connection lost to backend on :8000. Unable to refresh live benchmark data.");
     } finally {
       setLoading(false);
     }
@@ -37,6 +37,7 @@ export default function ModelComparison() {
     );
   }
 
+  const isEmpty = data && data.total_readings === 0;
   const ifData = data?.isolation_forest || {};
   const aeData = data?.autoencoder || {};
   const agree = data?.agreement || {};
@@ -59,7 +60,17 @@ export default function ModelComparison() {
         </div>
       </div>
 
-      {error && <div className="alert-box error">{error}</div>}
+      {error && (
+        <div className="alert-box error">
+          <span>⚠️ {error}</span>
+        </div>
+      )}
+
+      {isEmpty && (
+        <div className="alert-box info">
+          <span>ℹ️ <strong>No Telemetry Ingested Yet:</strong> Start the simulator (<code>python ml/simulator.py</code>) to accumulate streaming records for real-time benchmark calculation.</span>
+        </div>
+      )}
 
       {/* Live Stream Benchmark Grid */}
       <div className="benchmark-overview-grid">
@@ -67,7 +78,9 @@ export default function ModelComparison() {
           <span className="kpi-label">Sample Pool Evaluated</span>
           <span className="kpi-value">{data ? data.total_readings.toLocaleString() : "--"}</span>
           <span className="kpi-sub">
-            {data ? `${data.true_failures} Failures (${((data.true_failures / data.total_readings) * 100).toFixed(1)}% base rate)` : "--"}
+            {data && data.total_readings > 0
+              ? `${data.true_failures} Failures (${((data.true_failures / data.total_readings) * 100).toFixed(1)}% base rate)`
+              : "0 Failures (0.0% base rate)"}
           </span>
         </div>
 
@@ -84,7 +97,7 @@ export default function ModelComparison() {
         <div className="overview-metric-card card-ae">
           <span className="kpi-label">Leading F1 Score</span>
           <span className="kpi-value text-purple font-mono">
-            {aeData.f1 ? aeData.f1.toFixed(3) : "--"}
+            {aeData.f1 ? aeData.f1.toFixed(3) : "0.000"}
           </span>
           <span className="kpi-sub">PyTorch Deep Autoencoder</span>
         </div>
@@ -131,19 +144,19 @@ export default function ModelComparison() {
             <div className="matrix-subgrid">
               <div className="matrix-cell">
                 <span className="dim text-xs">True Pos (TP)</span>
-                <strong className="font-mono">{ifData.tp ?? "--"}</strong>
+                <strong className="font-mono">{ifData.tp ?? 0}</strong>
               </div>
               <div className="matrix-cell">
                 <span className="dim text-xs">False Pos (FP)</span>
-                <strong className="font-mono text-warn">{ifData.fp ?? "--"}</strong>
+                <strong className="font-mono text-warn">{ifData.fp ?? 0}</strong>
               </div>
               <div className="matrix-cell">
                 <span className="dim text-xs">False Neg (FN)</span>
-                <strong className="font-mono text-warn">{ifData.fn ?? "--"}</strong>
+                <strong className="font-mono text-warn">{ifData.fn ?? 0}</strong>
               </div>
               <div className="matrix-cell">
                 <span className="dim text-xs">True Neg (TN)</span>
-                <strong className="font-mono text-emerald">{ifData.tn ?? "--"}</strong>
+                <strong className="font-mono text-emerald">{ifData.tn ?? 0}</strong>
               </div>
             </div>
           </div>
@@ -185,19 +198,19 @@ export default function ModelComparison() {
             <div className="matrix-subgrid">
               <div className="matrix-cell">
                 <span className="dim text-xs">True Pos (TP)</span>
-                <strong className="font-mono text-purple">{aeData.tp ?? "--"}</strong>
+                <strong className="font-mono text-purple">{aeData.tp ?? 0}</strong>
               </div>
               <div className="matrix-cell">
                 <span className="dim text-xs">False Pos (FP)</span>
-                <strong className="font-mono text-warn">{aeData.fp ?? "--"}</strong>
+                <strong className="font-mono text-warn">{aeData.fp ?? 0}</strong>
               </div>
               <div className="matrix-cell">
                 <span className="dim text-xs">False Neg (FN)</span>
-                <strong className="font-mono text-warn">{aeData.fn ?? "--"}</strong>
+                <strong className="font-mono text-warn">{aeData.fn ?? 0}</strong>
               </div>
               <div className="matrix-cell">
                 <span className="dim text-xs">True Neg (TN)</span>
-                <strong className="font-mono text-emerald">{aeData.tn ?? "--"}</strong>
+                <strong className="font-mono text-emerald">{aeData.tn ?? 0}</strong>
               </div>
             </div>
           </div>
@@ -252,25 +265,25 @@ export default function ModelComparison() {
           <div className="legend-item">
             <span className="dot dot-both"></span>
             <div>
-              <strong>Both Flagged (High-Confidence):</strong> <span className="font-mono">{agree.both_flagged}</span> readings
+              <strong>Both Flagged (High-Confidence):</strong> <span className="font-mono">{agree.both_flagged ?? 0}</span> readings
             </div>
           </div>
           <div className="legend-item">
             <span className="dot dot-ae"></span>
             <div>
-              <strong>Autoencoder Only (Relational):</strong> <span className="font-mono">{agree.ae_only}</span> readings
+              <strong>Autoencoder Only (Relational):</strong> <span className="font-mono">{agree.ae_only ?? 0}</span> readings
             </div>
           </div>
           <div className="legend-item">
             <span className="dot dot-if"></span>
             <div>
-              <strong>Isolation Forest Only (Outlier):</strong> <span className="font-mono">{agree.iso_only}</span> readings
+              <strong>Isolation Forest Only (Outlier):</strong> <span className="font-mono">{agree.iso_only ?? 0}</span> readings
             </div>
           </div>
           <div className="legend-item">
             <span className="dot dot-normal"></span>
             <div>
-              <strong>Both Normal (Nominal State):</strong> <span className="font-mono">{agree.both_normal}</span> readings
+              <strong>Both Normal (Nominal State):</strong> <span className="font-mono">{agree.both_normal ?? 0}</span> readings
             </div>
           </div>
         </div>

@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+backend/venv/
+.venv/
+env/
+venv/
+ENV/
+
+# Environment variables (secrets)
+.env
+backend/.env
+*.env.local
+
+# Node & Frontend
+node_modules/
+frontend/node_modules/
+frontend/dist/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Datasets (large CSV files - downloaded via backend/ml/download_dataset.py)
+data/raw/*.csv
+data/raw/*.zip
+data/*.csv
+
+# Trained Model Artifacts (can be regenerated with training scripts)
+# models/*.pkl
+# models/*.pt
+
+# OS & IDE
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Temporary logs
+/tmp/
+*.log
