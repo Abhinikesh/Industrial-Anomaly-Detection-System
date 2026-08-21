@@ -13,7 +13,6 @@ import {
 
 const API_BASE = "http://localhost:8000";
 
-// Custom anomaly dot with prominent red highlight and white ring
 const AnomalyDot = (props) => {
   const { cx, cy, payload } = props;
   if (payload && payload.is_anomaly) {
