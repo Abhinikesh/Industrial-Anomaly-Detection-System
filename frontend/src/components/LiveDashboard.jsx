@@ -66,7 +66,6 @@ export default function LiveDashboard() {
         axios.get(`${API_BASE}/readings/anomalies?limit=50`),
       ]);
 
-      // Reverse so chronological order goes left-to-right on charts
       const chronological = [...recentRes.data].reverse().map((item, idx) => ({
         ...item,
         displayTime: item.timestamp ? item.timestamp.substring(11, 19) : `#${idx}`,
