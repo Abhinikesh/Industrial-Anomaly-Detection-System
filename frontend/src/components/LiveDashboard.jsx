@@ -87,8 +87,6 @@ export default function LiveDashboard() {
     }
   };
 
-  // TODO: upgrade polling to WebSockets for sub-second streaming
-  // TODO: add CSV export button for filtered anomaly events
 
   useEffect(() => {
     fetchData();
