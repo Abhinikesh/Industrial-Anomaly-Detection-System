@@ -26,7 +26,6 @@ const AnomalyDot = (props) => {
   return null;
 };
 
-// Custom Tooltip with styled readout
 const CustomTooltip = ({ active, payload, label }) => {
   if (active && payload && payload.length) {
     const isAnomaly = payload[0]?.payload?.is_anomaly;
