@@ -73,7 +73,7 @@ export default function LiveDashboard() {
 
       setReadings(chronological);
       if (recentRes.data.length > 0) {
-        setLastReading(recentRes.data[0]); // newest reading
+        setLastReading(recentRes.data[0]); 
       }
       setStats(statsRes.data);
       setAnomalies(anomaliesRes.data);
