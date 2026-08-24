@@ -302,7 +302,6 @@
 .text-emerald { color: #34d399; }
 .text-cyan { color: #38bdf8; }
 
-/* ── Charts Grid ── */
 .charts-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
