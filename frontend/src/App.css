@@ -228,7 +228,6 @@
   background: rgba(2, 132, 199, 0.1);
 }
 
-/* ── KPI Summary Cards ── */
 .kpi-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
