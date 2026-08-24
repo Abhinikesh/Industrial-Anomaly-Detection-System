@@ -112,7 +112,6 @@
   box-shadow: 0 2px 8px rgba(37, 99, 235, 0.4);
 }
 
-/* ── Live Status Banner ── */
 .status-banner {
   display: flex;
   justify-content: space-between;
