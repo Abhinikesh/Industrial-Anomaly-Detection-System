@@ -810,7 +810,6 @@
 .dot-if   { background: #0284c7; }
 .dot-normal { background: #10b981; }
 
-/* ── Explanation Card ── */
 .explanation-card {
   background: var(--bg-card);
   border-radius: 10px;
