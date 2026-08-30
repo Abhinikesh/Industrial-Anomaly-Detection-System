@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, List
 from app.database import sensor_readings
 
 
@@ -87,16 +87,45 @@ def _calc_metrics(tp: int, fp: int, fn: int, tn: int) -> dict:
     }
 
 
-def get_model_comparison_stats() -> dict:
+def get_fleet_overview() -> List[dict]:
+    """Return one summary row per machine_type for the 'All' fleet overview panel."""
+    pipeline = [
+        {
+            "$group": {
+                "_id": "$machine_type",
+                "total":       {"$sum": 1},
+                "anomalies":   {"$sum": {"$cond": ["$is_anomaly", 1, 0]}},
+                "latest_ts":   {"$max": "$timestamp"},
+                "latest_anom": {"$last": "$is_anomaly"},
+            }
+        },
+        {"$sort": {"_id": 1}},
+    ]
+    rows = list(sensor_readings.aggregate(pipeline))
+    result = []
+    for r in rows:
+        total = r["total"] or 1
+        result.append({
+            "machine_type":    r["_id"],
+            "total_readings":  r["total"],
+            "anomaly_count":   r["anomalies"],
+            "anomaly_rate":    round(r["anomalies"] / total * 100, 2),
+            "latest_ts":       r["latest_ts"],
+            "is_anomaly_now":  bool(r["latest_anom"]),
+        })
+    return result
+
+
+def get_model_comparison_stats(machine_type: Optional[str] = None) -> dict:
     """
     Computes live streaming comparison metrics for Isolation Forest vs Autoencoder
-    evaluated against true_failure on all stored readings in MongoDB.
+    evaluated against true_failure on stored readings in MongoDB.
     Safely handles empty database state (0 readings) without throwing division errors.
 
-    Note: This is intentionally global (no machine_type filter) — the model comparison
-    view benchmarks the full dataset for a holistic accuracy picture.
+    Pass machine_type to scope metrics to one fleet type. Omit for all types combined.
     """
-    total = sensor_readings.count_documents({})
+    base = _type_filter(machine_type)
+    total = sensor_readings.count_documents(base)
     if total == 0:
         empty_metrics = {
             "flagged": 0, "flagged_pct": 0.0,
@@ -122,34 +151,34 @@ def get_model_comparison_stats() -> dict:
         }
 
     # True condition counts
-    true_fails = sensor_readings.count_documents({"true_failure": 1})
+    true_fails = sensor_readings.count_documents({**base, "true_failure": 1})
     true_norms = total - true_fails
 
     # Isolation Forest metrics
-    iso_flagged = sensor_readings.count_documents({"iso_flag": 1})
-    tp_iso = sensor_readings.count_documents({"iso_flag": 1, "true_failure": 1})
-    fp_iso = sensor_readings.count_documents({"iso_flag": 1, "true_failure": 0})
-    fn_iso = sensor_readings.count_documents({"iso_flag": 0, "true_failure": 1})
-    tn_iso = sensor_readings.count_documents({"iso_flag": 0, "true_failure": 0})
+    iso_flagged = sensor_readings.count_documents({**base, "iso_flag": 1})
+    tp_iso = sensor_readings.count_documents({**base, "iso_flag": 1, "true_failure": 1})
+    fp_iso = sensor_readings.count_documents({**base, "iso_flag": 1, "true_failure": 0})
+    fn_iso = sensor_readings.count_documents({**base, "iso_flag": 0, "true_failure": 1})
+    tn_iso = sensor_readings.count_documents({**base, "iso_flag": 0, "true_failure": 0})
     iso_metrics = _calc_metrics(tp_iso, fp_iso, fn_iso, tn_iso)
     iso_metrics["flagged"]     = iso_flagged
     iso_metrics["flagged_pct"] = round(iso_flagged / total * 100, 2)
 
     # Autoencoder metrics
-    ae_flagged = sensor_readings.count_documents({"ae_flag": 1})
-    tp_ae = sensor_readings.count_documents({"ae_flag": 1, "true_failure": 1})
-    fp_ae = sensor_readings.count_documents({"ae_flag": 1, "true_failure": 0})
-    fn_ae = sensor_readings.count_documents({"ae_flag": 0, "true_failure": 1})
-    tn_ae = sensor_readings.count_documents({"ae_flag": 0, "true_failure": 0})
+    ae_flagged = sensor_readings.count_documents({**base, "ae_flag": 1})
+    tp_ae = sensor_readings.count_documents({**base, "ae_flag": 1, "true_failure": 1})
+    fp_ae = sensor_readings.count_documents({**base, "ae_flag": 1, "true_failure": 0})
+    fn_ae = sensor_readings.count_documents({**base, "ae_flag": 0, "true_failure": 1})
+    tn_ae = sensor_readings.count_documents({**base, "ae_flag": 0, "true_failure": 0})
     ae_metrics = _calc_metrics(tp_ae, fp_ae, fn_ae, tn_ae)
     ae_metrics["flagged"]     = ae_flagged
     ae_metrics["flagged_pct"] = round(ae_flagged / total * 100, 2)
 
     # Agreement / Disagreement
-    both_flagged = sensor_readings.count_documents({"iso_flag": 1, "ae_flag": 1})
-    both_normal  = sensor_readings.count_documents({"iso_flag": 0, "ae_flag": 0})
-    iso_only     = sensor_readings.count_documents({"iso_flag": 1, "ae_flag": 0})
-    ae_only      = sensor_readings.count_documents({"iso_flag": 0, "ae_flag": 1})
+    both_flagged = sensor_readings.count_documents({**base, "iso_flag": 1, "ae_flag": 1})
+    both_normal  = sensor_readings.count_documents({**base, "iso_flag": 0, "ae_flag": 0})
+    iso_only     = sensor_readings.count_documents({**base, "iso_flag": 1, "ae_flag": 0})
+    ae_only      = sensor_readings.count_documents({**base, "iso_flag": 0, "ae_flag": 1})
 
     agreed_count     = both_flagged + both_normal
     disagreed_count  = iso_only + ae_only
@@ -157,6 +186,7 @@ def get_model_comparison_stats() -> dict:
     disagreement_pct = round(disagreed_count / total * 100, 2)
 
     return {
+        "machine_type": machine_type or "all",
         "total_readings": total,
         "true_failures":  true_fails,
         "true_normals":   true_norms,

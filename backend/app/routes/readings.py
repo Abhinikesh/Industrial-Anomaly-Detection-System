@@ -5,6 +5,7 @@ from app.services.reading_service import (
     get_anomalies,
     get_reading_stats,
     get_model_comparison_stats,
+    get_fleet_overview,
 )
 
 router = APIRouter(prefix="/readings", tags=["readings"])
@@ -48,6 +49,17 @@ def reading_stats(machine_type: Optional[str] = None):
 
 
 @router.get("/model-comparison")
-def model_comparison():
-    """Return side-by-side IF vs AE benchmark metrics across all stored readings."""
-    return get_model_comparison_stats()
+def model_comparison(machine_type: Optional[str] = None):
+    """Return side-by-side IF vs AE benchmark metrics.
+
+    Optional query param:
+      ?machine_type=milling_machine  — scope to one fleet type
+      (omit for combined across all types)
+    """
+    return get_model_comparison_stats(machine_type=machine_type)
+
+
+@router.get("/fleet-overview")
+def fleet_overview():
+    """Return one summary row per machine_type for the 'All' fleet view."""
+    return get_fleet_overview()
