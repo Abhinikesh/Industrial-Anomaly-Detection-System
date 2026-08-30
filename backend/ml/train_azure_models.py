@@ -103,11 +103,24 @@ def load_data():
     print(f"Loaded {len(df):,} rows from {DATA_PATH}")
 
     # Compute contamination from actual failure rate so it adapts to
-    # whatever look-ahead window was used during preprocessing
+    # whatever look-ahead window was used during preprocessing.
     failure_rate = df["failure_within_24h"].mean()
-    print(f"  Measured failure rate: {failure_rate * 100:.2f}%  (used as IF contamination)")
+    print(f"  Measured failure rate: {failure_rate * 100:.2f}%")
 
-    return df, float(failure_rate)
+    # IsolationForest requires contamination in (0.0, 0.5].
+    # If the rate exceeds 0.5 something is wrong with the preprocessing
+    # (e.g. a labeling bug), so we cap at 0.5 and warn loudly.
+    contamination = min(float(failure_rate), 0.5)
+    if failure_rate > 0.5:
+        print(
+            f"  ⚠  WARNING: measured failure rate {failure_rate * 100:.1f}% "
+            f"exceeds sklearn's 50% contamination limit. Clamping to 0.50.\n"
+            f"     If this looks wrong, re-run preprocess.py to regenerate labels."
+        )
+    print(f"  Contamination used for IF: {contamination:.4f}")
+
+    return df, contamination
+
 
 
 def prepare_features(df: pd.DataFrame):

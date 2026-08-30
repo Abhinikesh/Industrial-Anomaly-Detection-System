@@ -145,44 +145,48 @@ def create_lookahead_label(telemetry: pd.DataFrame, failures: pd.DataFrame) -> p
     For every telemetry row, set failure_within_24h = 1 if there is a failure
     event for the same machine within the next FAILURE_LOOKAHEAD_HOURS hours.
 
-    Implementation:
-      We iterate per machine and use a sorted merge-asof style approach.
-      For each telemetry timestamp T, check if any failure time F satisfies:
-        T <= F <= T + FAILURE_LOOKAHEAD_HOURS hours
+    This is O(N log N) per machine via sorted groupby + searchsorted —
+    no quadratic pair-wise comparison.
 
-    This is O(N log N) per machine thanks to the sorted groupby + searchsorted
-    approach — no quadratic pair-wise comparison.
+    Unit-safety note (pandas 3.x):
+      pandas 3.x stores datetime columns as datetime64[us] (microseconds).
+      pd.Timedelta.value always returns nanoseconds — a 1000x mismatch that
+      would make a 24-hour window look like a 24,000-hour window and label
+      almost every row as a failure.  We fix this by using numpy timedelta64
+      arithmetic directly (unit-aware) and normalising everything to int64
+      microseconds before calling searchsorted.
     """
     print(f"\nCreating {FAILURE_LOOKAHEAD_HOURS}h look-ahead failure labels ...")
-    window = pd.Timedelta(hours=FAILURE_LOOKAHEAD_HOURS)
+    # numpy timedelta64 with explicit unit — numpy handles the us/ns conversion
+    window_delta = np.timedelta64(FAILURE_LOOKAHEAD_HOURS, "h")
 
     label_series = []
 
     for machine_id, tele_grp in telemetry.groupby("machine_id", sort=True):
         fail_grp = failures[failures["machine_id"] == machine_id]
 
-        timestamps = tele_grp["timestamp"].values  # numpy datetime64 array
+        timestamps = tele_grp["timestamp"].values  # datetime64[us] in pandas 3.x
         fail_times = fail_grp["failure_time"].values
 
         if len(fail_times) == 0:
-            # No failures recorded for this machine → all labels are 0
             labels = np.zeros(len(tele_grp), dtype=np.int8)
         else:
             fail_times_sorted = np.sort(fail_times)
-            window_ns = window.value  # timedelta → nanoseconds (numpy dtype)
 
-            # For each telemetry timestamp T, find whether any failure time F
-            # falls in [T, T + window_ns]:
-            #   - searchsorted(fail_times, T)         → first index where fail >= T
-            #   - searchsorted(fail_times, T+window)  → first index where fail > T+window
-            # If the two indices differ, at least one failure falls in the window.
-            t_ns     = timestamps.astype("int64")
-            t_end_ns = t_ns + window_ns
+            # Compute window end via numpy datetime64 arithmetic — unit-aware,
+            # no nanosecond/microsecond confusion.
+            t_end = timestamps + window_delta
 
-            left_idx  = np.searchsorted(fail_times_sorted.astype("int64"), t_ns,     side="left")
-            right_idx = np.searchsorted(fail_times_sorted.astype("int64"), t_end_ns, side="right")
+            # Normalise to datetime64[us] → int64 (microseconds since epoch)
+            # for both arrays before searchsorted so units are always identical.
+            t_int     = timestamps.astype("datetime64[us]").astype("int64")
+            t_end_int = t_end.astype("datetime64[us]").astype("int64")
+            fail_int  = fail_times_sorted.astype("datetime64[us]").astype("int64")
 
-            labels = (right_idx > left_idx).astype(np.int8)
+            # Any failure F in [T, T+window]?
+            left_idx  = np.searchsorted(fail_int, t_int,     side="left")
+            right_idx = np.searchsorted(fail_int, t_end_int, side="right")
+            labels    = (right_idx > left_idx).astype(np.int8)
 
         label_series.append(
             pd.Series(labels, index=tele_grp.index, name="failure_within_24h")
