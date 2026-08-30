@@ -42,3 +42,5 @@ data/*.csv
 # Temporary logs
 /tmp/
 *.log
+__pycache__/
+*.pyc
