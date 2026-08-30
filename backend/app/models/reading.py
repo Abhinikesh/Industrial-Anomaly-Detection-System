@@ -1,16 +1,3 @@
-"""
-backend/app/models/reading.py
-=============================
-Pydantic schemas for ingest payloads and stored readings.
-
-IngestPayload performs machine-type-aware validation:
-  - Rejects unknown machine_type values with a clear 422 error.
-  - Verifies that all required sensor keys for the given machine_type are
-    present in sensor_values, so the model scorer never silently receives
-    an incomplete feature vector.
-  - Ensures every value in sensor_values is a finite number (no NaN / inf).
-"""
-
 from __future__ import annotations
 
 import math

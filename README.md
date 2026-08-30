@@ -20,31 +20,26 @@ Real-time predictive maintenance for 3 machine fleets — Isolation Forest + PyT
 ## Setup
 
 ```bash
-# 1. Clone
-git clone https://github.com/Abhinikesh/Industrial-Anomaly-Detection-System.git
-cd "Industrial Anomaly Detection System"
-cp .env.example .env
-
-# 2. Python environment
+# 1. Python environment
 cd backend
 python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 
-# 3. Download & train — Milling Machine (no Kaggle needed)
+# 2. Download & train — Milling Machine (no Kaggle needed)
 python ml/download_dataset.py
 python ml/train_isolation_forest.py && python ml/train_autoencoder.py
 
-# 4. Download & train — Azure Fleet
+# 3. Download & train — Azure Fleet
 python ml/datasets/azure_pdm/download_dataset.py
 python ml/datasets/azure_pdm/preprocess.py
 python ml/train_azure_models.py
 
-# 5. Download & train — Water Pump
+# 4. Download & train — Water Pump
 python ml/datasets/pump_sensor/download_dataset.py
 python ml/datasets/pump_sensor/preprocess.py
 python ml/train_pump_models.py
 
-# 6. Frontend
+# 5. Frontend
 cd ../frontend && npm install
 ```
 
@@ -52,9 +47,8 @@ cd ../frontend && npm install
 
 ## Run
 
-### One command (from project root)
+### One command
 ```bash
-cd ..      # if currently in backend/ or frontend/
 ./start.sh
 ```
 

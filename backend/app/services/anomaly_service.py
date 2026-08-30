@@ -1,23 +1,3 @@
-"""
-Anomaly scoring engine with a machine-type model registry.
-
-Models are loaded once at module import time (not per-request) for speed.
-
-Architecture
-------------
-_MODEL_REGISTRY maps machine_type -> bundle dict containing:
-    iso          : trained IsolationForest
-    scaler       : fitted StandardScaler (same feature space as IF)
-    ae           : loaded SensorAutoencoder (eval mode)
-    ae_threshold : float — reconstruction error cutoff (mean + 2σ)
-    feature_order: list[str] — key order into sensor_values dict
-
-Adding a new machine type in the future:
-  1. Train & save new model artefacts.
-  2. Add a new entry to _MACHINE_MODEL_PATHS.
-  3. Everything else (scoring, routing, storage) works automatically.
-"""
-
 import os
 import json
 import joblib
@@ -36,10 +16,7 @@ MODEL_DIR = os.path.join(BASE_DIR, "../../../models")
 # ── Autoencoder definitions ───────────────────────────────────────────────────
 
 class StandardAutoencoder(nn.Module):
-    """
-    Standard bottleneck autoencoder (n_features → 3 → 2 → 3 → n_features)
-    used for AI4I milling machine (5 features) and Azure PdM (4 features).
-    """
+ 
     def __init__(self, n_features: int = 5):
         super().__init__()
         self.encoder = nn.Sequential(
@@ -56,10 +33,7 @@ class StandardAutoencoder(nn.Module):
 
 
 class PumpSensorAutoencoder(nn.Module):
-    """
-    15 → 10 → 5 (bottleneck) → 10 → 15 autoencoder with BatchNorm and Dropout,
-    used for the 15-sensor industrial water pump dataset.
-    """
+
     def __init__(self, n_features: int = 15):
         super().__init__()
         self.encoder = nn.Sequential(
