@@ -1,114 +1,181 @@
 # Industrial Anomaly Detection System
 
-Real-time sensor monitoring and predictive maintenance system for industrial machinery. Continuously ingests physical telemetry (temperature, rotational speed, torque, tool wear), runs dual unsupervised anomaly detection models (**Isolation Forest** and a **PyTorch Autoencoder**) to detect abnormal operating states, stores scored records in **MongoDB**, and visualizes live telemetry streams and benchmark metrics on a **React** mission-control dashboard.
+Real-time predictive maintenance platform for industrial machinery. Ingests continuous sensor telemetry from three independent machine fleets, scores every reading with two unsupervised ML models (**Isolation Forest** + **PyTorch Autoencoder**), stores results in **MongoDB**, and serves a live **React** mission-control dashboard with per-fleet filtering, anomaly incident logs, and side-by-side model benchmarks.
+
+---
+
+## Supported Machine Types
+
+| Machine Type | Dataset | Features | Model Architecture | Failure Rate |
+|---|---|---|---|---|
+| `milling_machine` | [AI4I 2020 (UCI)](https://archive.ics.uci.edu/dataset/601/ai4i+2020+predictive+maintenance+dataset) | `air_temp`, `process_temp`, `rpm`, `torque`, `tool_wear` | IF (100 trees) + AE `5→3→2→3→5` | 3.4% |
+| `fleet_machine` | [Azure PdM (Kaggle)](https://www.kaggle.com/datasets/arnabbiswas1/microsoft-azure-predictive-maintenance) | `voltage`, `rotation`, `pressure`, `vibration` | IF (100 trees) + AE `4→3→2→3→4` | 2.0% |
+| `water_pump` | [Pump Sensor (Kaggle)](https://www.kaggle.com/datasets/nphantawee/pump-sensor-data) | Top-15 of 51 sensors by failure correlation | IF (150 trees) + AE `15→10→5→10→15` + BatchNorm | 6.6% |
+
+Each fleet has its own independent model pair. Readings never cross pipelines — the API automatically routes each ingest request to the correct model based on `machine_type`.
+
+---
+
+## Architecture
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  Simulators (3 × Python)                                     │
+│  simulator.py · simulator_azure.py · simulator_pump.py       │
+│  (chronological replay at configurable cadence)              │
+└──────────────────┬───────────────────────────────────────────┘
+                   │  POST /ingest  (JSON telemetry)
+                   ▼
+┌──────────────────────────────────────────────────────────────┐
+│  FastAPI Backend  :8000                                      │
+│                                                              │
+│  ┌─────────────────────────────────────────────────────┐     │
+│  │ Input Validation (Pydantic)                         │     │
+│  │ • Unknown machine_type → 422                        │     │
+│  │ • Missing sensor keys  → 422                        │     │
+│  │ • Non-finite values    → 422                        │     │
+│  └───────────────────┬─────────────────────────────────┘     │
+│                      ▼                                       │
+│  ┌─────────────────────────────────────────────────────┐     │
+│  │ Model Registry (anomaly_service.py)                 │     │
+│  │ machine_type → (IsolationForest, Scaler, Autoenc.)  │     │
+│  │ All models loaded at startup, scored per-request    │     │
+│  └───────────────────┬─────────────────────────────────┘     │
+│                      ▼                                       │
+│           iso_flag · ae_flag · is_anomaly                    │
+│                      ▼                                       │
+│  ┌──────────────────────────────┐                           │
+│  │  MongoDB  (sensor_readings)  │◄── GET /readings/*        │
+│  └──────────────────────────────┘                           │
+└──────────────────────────────────────────────────────────────┘
+                   │  REST (Axios)
+                   ▼
+┌──────────────────────────────────────────────────────────────┐
+│  React Dashboard  :3000                                      │
+│  • Fleet selector  (All / Milling / Azure / Pump)            │
+│  • Live sensor charts + anomaly incident log                 │
+│  • Model comparison cards with per-fleet F1 / recall        │
+│  • Training artefact gallery (confusion matrices, etc.)      │
+└──────────────────────────────────────────────────────────────┘
+```
 
 ---
 
 ## Tech Stack
 
-- **Backend & ML:** Python 3.10+, FastAPI, Uvicorn, PyTorch 2.x, Scikit-Learn, Pandas, NumPy, Joblib, PyMongo
-- **Database:** MongoDB Community Server (local instance at `mongodb://localhost:27017`)
-- **Frontend Dashboard:** React 18, Vite, Recharts, Axios, Vanilla CSS (Control-Room Dark Theme)
-- **Dataset:** AI4I 2020 Predictive Maintenance Dataset (UCI Machine Learning Repository, 10,000 records)
+- **Backend & ML:** Python 3.10+, FastAPI, Uvicorn, PyTorch 2.x, Scikit-Learn, Pandas, NumPy, Joblib
+- **Configuration:** `pydantic-settings` (`.env`-driven, all settings in `backend/app/config.py`)
+- **Logging:** Python `logging` module — rotating file `logs/app.log` + stdout
+- **Database:** MongoDB Community Server (local, `mongodb://localhost:27017`)
+- **Frontend:** React 18, Vite, Recharts, Axios, Vanilla CSS (dark control-room theme)
 
 ---
 
 ## Prerequisites
 
-Before starting, ensure you have the following installed on your machine:
-- **Python 3.10+** (`python3 --version`)
-- **Node.js 18+** and `npm` (`node -v`, `npm -v`)
-- **MongoDB Community Edition** running locally on port 27017 (`mongosh` or `brew services start mongodb-community`)
+- **Python 3.10+** — `python3 --version`
+- **Node.js 18+** — `node -v`
+- **MongoDB Community** running on port 27017 — `brew services start mongodb-community`
+- **Kaggle API credentials** (for Azure PdM and Pump Sensor datasets):
+  1. Go to [kaggle.com → Account → API → Create Token](https://www.kaggle.com/settings)
+  2. Place `kaggle.json` at `~/.kaggle/kaggle.json`
+  3. `chmod 600 ~/.kaggle/kaggle.json`
 
 ---
 
-## Step-by-Step Setup Guide
+## Setup (fresh install)
 
-### 1. Clone & Setup Environment Files
+### 1. Clone & configure environment
 ```bash
-git clone https://github.com/Abhinikesh/ndustrial-Anomaly-Detection-System.git
+git clone https://github.com/Abhinikesh/Industrial-Anomaly-Detection-System.git
 cd "Industrial Anomaly Detection System"
 
-# Copy example environment configuration
-cp .env.example .env
-cp backend/.env.example backend/.env
+cp .env.example .env          # edit MONGO_URI if needed
 ```
 
-### 2. Backend Setup & Dependency Installation
+### 2. Install Python dependencies
 ```bash
 cd backend
 python3 -m venv venv
-source venv/bin/activate          # On Windows: venv\Scripts\activate
+source venv/bin/activate       # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### 3. Download Dataset & Train Baseline Models
-*Note: Run these once before starting the servers to download the raw dataset and generate model weights in `models/`.*
+### 3. Download datasets & train all three model pairs
 
+> Run all commands from inside `backend/` with the venv active.
+
+**Milling Machine (AI4I 2020 — auto-download from UCI, no Kaggle needed)**
 ```bash
-# Still inside backend/ with venv active:
-python ml/download_dataset.py       # Downloads & extracts data/raw/ai4i2020.csv
-python ml/explore_data.py           # Generates EDA plots into results/eda/
-python ml/train_isolation_forest.py # Trains IF, outputs models/isolation_forest.pkl
-python ml/train_autoencoder.py      # Trains PyTorch AE, outputs models/autoencoder.pt
-cd ..
+python ml/download_dataset.py           # → data/raw/ai4i2020.csv
+python ml/explore_data.py               # → results/eda/  (EDA plots)
+python ml/train_isolation_forest.py     # → models/isolation_forest.pkl
+python ml/train_autoencoder.py          # → models/autoencoder.pt
 ```
 
-### 4. Frontend Setup & Dependency Installation
+**Azure Fleet (Microsoft Azure PdM — requires Kaggle credentials)**
 ```bash
-cd frontend
+python ml/datasets/azure_pdm/download_dataset.py   # → data/raw/azure_pdm/
+python ml/datasets/azure_pdm/preprocess.py         # → data/processed/azure_pdm.csv
+python ml/train_azure_models.py                    # → models/azure/  (~3–5 min)
+```
+
+**Water Pump (Pump Sensor Data — requires Kaggle credentials)**
+```bash
+python ml/datasets/pump_sensor/download_dataset.py # → data/raw/pump_sensor/
+python ml/datasets/pump_sensor/preprocess.py       # → data/processed/pump_sensor.csv
+python ml/train_pump_models.py                     # → models/pump/  (~2–4 min)
+```
+
+### 4. Install frontend dependencies
+```bash
+cd ../frontend
 npm install
 cd ..
 ```
 
 ---
 
-## Running the Application (4-Terminal Setup)
+## Running the System
 
-For demo day or development, open separate terminal windows and run in this order:
-
-### Terminal 1: MongoDB Database
+### Option A — Single command (recommended)
 ```bash
-# Start MongoDB service if not already active
-brew services start mongodb-community
-# Or run mongod directly:
-mongod --dbpath /usr/local/var/mongodb
+# From project root:
+./start.sh
 ```
+Starts MongoDB check → backend → frontend → all 3 simulators. Press `Ctrl+C` to stop everything.
 
-### Terminal 2: FastAPI Backend Server
+### Option B — Manual (5 terminals)
+
+**Terminal 1 — Backend**
 ```bash
-cd backend
-source venv/bin/activate
+cd backend && source venv/bin/activate
 uvicorn app.main:app --reload --port 8000
 ```
-*API will be active at `http://localhost:8000` (Interactive docs at `http://localhost:8000/docs`).*
+API docs: http://localhost:8000/docs
 
-### Terminal 3: React Frontend Dashboard
+**Terminal 2 — Frontend**
 ```bash
-cd frontend
-npm run dev -- --port 3000
+cd frontend && npm run dev
 ```
-*Open your browser and navigate to **`http://localhost:3000`**.*
+Dashboard: http://localhost:3000
 
-### Terminal 4: Sensor Stream Simulator
+**Terminal 3 — Milling Machine simulator**
 ```bash
-cd backend
-source venv/bin/activate
-
-# Standard 1-second cadence:
-python ml/simulator.py
-
-# Or fast test mode (0.2s cadence):
+cd backend && source venv/bin/activate
 python ml/simulator.py --fast
 ```
 
----
-
-## Quick Startup (All-in-One Script)
-
-Alternatively, run the automated startup script:
+**Terminal 4 — Azure Fleet simulator**
 ```bash
-./start.sh
+cd backend && source venv/bin/activate
+python ml/simulator_azure.py --fast
+```
+
+**Terminal 5 — Water Pump simulator**
+```bash
+cd backend && source venv/bin/activate
+python ml/simulator_pump.py --fast
 ```
 
 ---
@@ -116,70 +183,109 @@ Alternatively, run the automated startup script:
 ## Project Structure
 
 ```
-industrial-anomaly-detection/
+Industrial Anomaly Detection System/
+├── .env.example                         # Environment template (copy to .env)
+├── .env                                 # Local config (gitignored)
+├── start.sh                             # All-in-one startup script
+│
 ├── backend/
 │   ├── app/
+│   │   ├── config.py                    # Centralised settings (pydantic-settings)
+│   │   ├── logger.py                    # Rotating file + console logger
+│   │   ├── database.py                  # MongoDB connection & index setup
+│   │   ├── main.py                      # FastAPI app entry point & CORS
 │   │   ├── models/
-│   │   │   ├── reading.py             # Pydantic schema for telemetry & DB documents
-│   │   │   └── schemas.py             # API schemas
+│   │   │   └── reading.py               # Pydantic schemas + per-type validation
 │   │   ├── routes/
-│   │   │   ├── ingest.py              # POST /ingest (telemetry receiver & scoring)
-│   │   │   └── readings.py            # GET /readings/* (recent, stats, anomalies, comparison)
-│   │   ├── services/
-│   │   │   ├── anomaly_service.py     # Inference engine (loads IF + PyTorch AE)
-│   │   │   └── reading_service.py     # MongoDB CRUD & live benchmark calculations
-│   │   ├── database.py                # PyMongo connection & B-tree index setup
-│   │   └── main.py                    # FastAPI application entry & CORS configuration
+│   │   │   ├── ingest.py                # POST /ingest
+│   │   │   └── readings.py              # GET /readings/{recent,anomalies,stats,...}
+│   │   └── services/
+│   │       ├── anomaly_service.py       # Model registry + IF & AE scoring
+│   │       └── reading_service.py       # MongoDB CRUD & benchmark aggregations
 │   ├── ml/
-│   │   ├── download_dataset.py        # Automated UCI dataset downloader
-│   │   ├── explore_data.py            # EDA statistical script & histogram generator
-│   │   ├── train_isolation_forest.py  # Isolation Forest training script
-│   │   ├── train_autoencoder.py       # PyTorch Autoencoder training script
-│   │   ├── simulator.py               # Continuous telemetry streaming engine
-│   │   ├── generate_report_metrics.py # Markdown evaluation summary generator
-│   │   └── generate_architecture_diagram.py # Architecture graphic generator
-│   ├── requirements.txt               # Backend Python dependencies
-│   ├── .env.example                   # Backend environment template
-│   └── .env                           # Local environment config
+│   │   ├── download_dataset.py          # AI4I 2020 downloader (UCI)
+│   │   ├── explore_data.py              # EDA plots for milling machine
+│   │   ├── train_isolation_forest.py    # Milling IF training
+│   │   ├── train_autoencoder.py         # Milling AE training
+│   │   ├── train_azure_models.py        # Azure fleet IF + AE training
+│   │   ├── train_pump_models.py         # Water pump IF + AE training
+│   │   ├── simulator.py                 # Milling machine telemetry streamer
+│   │   ├── simulator_azure.py           # Azure fleet telemetry streamer
+│   │   ├── simulator_pump.py            # Water pump telemetry streamer
+│   │   └── datasets/
+│   │       ├── azure_pdm/
+│   │       │   ├── download_dataset.py  # Kaggle downloader
+│   │       │   └── preprocess.py        # 24h look-ahead failure labelling
+│   │       └── pump_sensor/
+│   │           ├── download_dataset.py  # Kaggle downloader
+│   │           └── preprocess.py        # Top-15 sensor selection by correlation
+│   ├── logs/
+│   │   └── app.log                      # Rotating application log (gitignored)
+│   └── requirements.txt
+│
 ├── frontend/
-│   ├── src/
-│   │   ├── components/
-│   │   │   ├── LiveDashboard.jsx      # Real-time Recharts monitoring & incident log
-│   │   │   └── ModelComparison.jsx    # Side-by-side benchmark metrics & image gallery
-│   │   ├── App.jsx                    # Root view with navigation tabs
-│   │   ├── App.css                    # Control-room styling & responsive grid layout
-│   │   └── index.css                  # Global background reset
-│   ├── package.json                   # React dependencies (Axios, Recharts, Vite)
-│   └── vite.config.js                 # Dev server port 3000 configuration
+│   └── src/
+│       ├── components/
+│       │   ├── LiveDashboard.jsx         # Live charts + fleet selector + incident log
+│       │   └── ModelComparison.jsx       # Per-fleet IF vs AE benchmark cards
+│       ├── App.jsx                       # Navigation tabs
+│       └── App.css                       # Dark control-room theme
+│
 ├── data/
-│   └── raw/                           # Raw AI4I 2020 CSV dataset (downloaded)
+│   ├── raw/                              # Downloaded raw CSVs (gitignored if large)
+│   └── processed/                        # Preprocessed & labelled CSVs
+│
 ├── models/
-│   ├── isolation_forest.pkl           # Serialized Isolation Forest model
-│   ├── scaler.pkl                     # StandardScaler feature normalizer
-│   ├── autoencoder.pt                 # PyTorch Autoencoder neural weights
-│   └── autoencoder_threshold.json     # Calibrated reconstruction threshold (mean + 2σ)
-├── results/
-│   ├── eda/                           # Correlation heatmap and sensor distributions
-│   ├── isolation_forest/              # IF confusion matrix & score distribution
-│   ├── autoencoder/                   # AE confusion matrix & reconstruction error plots
-│   └── screenshots/                   # Folder for live dashboard screenshots
-├── report_assets/
-│   ├── project_overview.md            # Comprehensive internship report overview
-│   ├── model_metrics.md               # Auto-generated model benchmark comparison
-│   ├── database_schema.md             # Collection schema & field documentation
-│   ├── architecture_diagram.md        # Architecture narrative & Mermaid flowchart
-│   ├── architecture_diagram.png       # Standalone system architecture diagram
-│   └── sample_results/                # Curated evaluation plots for report insertion
-├── start.sh                           # All-in-one startup script
-├── .gitignore                         # Project-wide Git ignore rules
-├── .env.example                       # Root environment template
-└── README.md                          # Project documentation
+│   ├── isolation_forest.pkl              # Milling machine IF
+│   ├── scaler.pkl                        # Milling machine scaler
+│   ├── autoencoder.pt                    # Milling machine AE
+│   ├── autoencoder_threshold.json        # Milling machine AE threshold
+│   ├── azure/                            # Azure fleet models
+│   └── pump/                             # Water pump models
+│
+└── results/
+    ├── eda/                              # Milling machine EDA plots
+    ├── isolation_forest/                 # Milling IF evaluation plots
+    ├── autoencoder/                      # Milling AE evaluation plots
+    ├── azure_pdm/                        # Azure fleet evaluation plots
+    └── pump_sensor/                      # Water pump evaluation plots
 ```
+
+---
+
+## Configuration
+
+All settings live in `backend/app/config.py` and are overridable via `.env`:
+
+| Variable | Default | Description |
+|---|---|---|
+| `MONGO_URI` | `mongodb://localhost:27017/anomaly_detection` | MongoDB connection string |
+| `API_PORT` | `8000` | Uvicorn bind port |
+| `CORS_ORIGINS` | `*` | Allowed origins (comma-separated) |
+| `LOG_LEVEL` | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
+| `LOG_FILE` | `logs/app.log` | Rotating log file path (relative to `backend/`) |
+| `LOG_MAX_BYTES` | `10485760` | Max log file size before rotation (10 MB) |
+| `LOG_BACKUP_COUNT` | `5` | Number of backup log files to keep |
+
+---
+
+## API Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/ingest` | Score and store one sensor reading |
+| `GET` | `/readings/recent` | Latest N readings (`?machine_type=`, `?limit=`) |
+| `GET` | `/readings/anomalies` | Latest N anomalous readings (`?machine_type=`) |
+| `GET` | `/readings/stats` | Aggregate counts and anomaly rate (`?machine_type=`) |
+| `GET` | `/readings/model-comparison` | IF vs AE benchmark metrics (`?machine_type=`) |
+| `GET` | `/readings/fleet-overview` | One-row summary per machine type |
+| `GET` | `/health` | Liveness probe |
+| `GET` | `/docs` | Interactive Swagger UI |
 
 ---
 
 ## Known Limitations
 
-- **Single-Machine Simulation:** The current edge simulator replays telemetry from one milling machine at a time (`machine_id: "SIM-001"`). Multi-tenant machine fleet support is planned for future iterations.
-- **Decision Logic Simplification:** The system uses a union (OR) ensemble rule to maximize recall for safety. Future iterations can incorporate adaptive voting thresholds or cost-sensitive weighted scoring.
-- **Hardware Integration:** Telemetry is generated via replay simulation of empirical physics data rather than live hardware sensor protocols (e.g. MQTT / Modbus / OPC-UA).
+- **Chronological replay only:** Simulators replay historical datasets at a configurable cadence. Live hardware sensor protocols (MQTT / Modbus / OPC-UA) are not yet integrated.
+- **Union ensemble:** The `is_anomaly` flag uses an OR rule (flagged if *either* model fires) for maximum recall. Weighted voting or cost-sensitive thresholds are not yet implemented.
+- **Single-node deployment:** MongoDB runs locally. Production hardening (replica set, TLS, auth) is out of scope for this version.

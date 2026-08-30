@@ -1,17 +1,19 @@
 from pymongo import MongoClient, DESCENDING, ASCENDING
-from dotenv import load_dotenv
-import os
 
-load_dotenv()
+from app.config import settings
+from app.logger import get_logger
 
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/anomaly_detection")
+log = get_logger(__name__)
 
-client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=3000)
+client = MongoClient(
+    settings.mongo_uri,
+    serverSelectionTimeoutMS=settings.mongo_server_selection_timeout_ms,
+)
 db = client.get_default_database()
 
 # Collections
 sensor_readings = db["sensor_readings"]
-anomalies = db["anomalies"]
+anomalies       = db["anomalies"]
 
 # Ensure performance indexes for high-throughput streaming and fast dashboard queries
 try:
@@ -32,5 +34,7 @@ try:
     sensor_readings.create_index(
         [("machine_type", ASCENDING), ("is_anomaly", DESCENDING), ("timestamp", DESCENDING)]
     )
+
+    log.info("MongoDB indexes verified/created on sensor_readings collection.")
 except Exception as e:
-    print(f"[database] Note on index creation: {e}")
+    log.warning("Index creation note (non-fatal): %s", e)

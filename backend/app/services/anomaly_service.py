@@ -26,6 +26,9 @@ import torch
 import torch.nn as nn
 from typing import Dict, Any, Optional
 
+from app.logger import get_logger
+
+log       = get_logger(__name__)
 BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
 MODEL_DIR = os.path.join(BASE_DIR, "../../../models")
 
@@ -175,7 +178,7 @@ def _load_single_type(machine_type: str, paths: dict) -> None:
             "Run the training scripts first.\n  " + "\n  ".join(missing)
         )
         _registry_errors[machine_type] = msg
-        print(f"\n[anomaly_service] ⚠️  {msg}\n")
+        log.warning("Model files missing for '%s': %s", machine_type, msg)
         return
 
     try:
@@ -211,14 +214,15 @@ def _load_single_type(machine_type: str, paths: dict) -> None:
             "ae_threshold": ae_threshold,
             "feature_order": feature_order,
         }
-        print(
-            f"[anomaly_service] ✓ Models loaded for machine_type='{machine_type}' "
-            f"(IF + AE, {n_features} features, threshold={ae_threshold:.5f})"
+        log.info(
+            "Models loaded: machine_type='%s'  features=%d  ae_threshold=%.5f",
+            machine_type, n_features, ae_threshold,
         )
-    except Exception as err:
-        msg = f"Error loading models for '{machine_type}': {err}"
+
+    except Exception as e:
+        msg = f"Error loading models for '{machine_type}': {e}"
         _registry_errors[machine_type] = msg
-        print(f"[anomaly_service] ⚠️  {msg}")
+        log.error("Failed to load models for '%s': %s", machine_type, e)
 
 
 
@@ -294,7 +298,7 @@ def score_reading(payload: dict) -> dict:
         }
 
     except Exception as e:
-        print(f"[anomaly_service] Scoring exception for '{machine_type}': {e}")
+        log.error("Scoring exception for '%s': %s", machine_type, e)
         return _fallback(f"Scoring failure for '{machine_type}': {e}")
 
 

@@ -3,6 +3,9 @@
 # ==============================================================================
 # Industrial Anomaly Detection System — All-in-One Startup Script
 # ==============================================================================
+# Starts MongoDB (if not running), FastAPI backend, React frontend, and
+# all three sensor stream simulators in background processes.
+# ==============================================================================
 
 set -e
 
@@ -10,93 +13,126 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$PROJECT_ROOT"
 
 echo "======================================================================"
-echo "⚙️  Starting Industrial Anomaly Detection System"
+echo "⚙️  Industrial Anomaly Detection System v2.0"
 echo "======================================================================"
 
-# 1. Check MongoDB
-echo "[1/4] Checking MongoDB service..."
+# ── 1. Check MongoDB ──────────────────────────────────────────────────────────
+echo ""
+echo "[1/5] Checking MongoDB service..."
 if command -v mongosh &> /dev/null; then
   if mongosh --eval "db.adminCommand('ping')" --quiet &> /dev/null; then
-    echo "  ✓ MongoDB is running locally."
+    echo "  ✓ MongoDB is running."
   else
-    echo "  ⚠️  MongoDB is not responding. Starting MongoDB service..."
+    echo "  ⚠️  MongoDB not responding — attempting to start..."
     if command -v brew &> /dev/null; then
       brew services start mongodb-community || true
     fi
   fi
 else
-  echo "  ℹ️  mongosh CLI not found. Assuming MongoDB is active at localhost:27017."
+  echo "  ℹ️  mongosh not found. Assuming MongoDB is active at localhost:27017."
 fi
 
-# 2. Setup / Activate Backend
+# ── 2. Python venv + deps ─────────────────────────────────────────────────────
 echo ""
-echo "[2/4] Initializing Python Virtual Environment..."
+echo "[2/5] Initialising Python virtual environment..."
 cd "$PROJECT_ROOT/backend"
 if [ ! -d "venv" ]; then
   echo "  Creating virtual environment..."
   python3 -m venv venv
   source venv/bin/activate
-  echo "  Installing dependencies from requirements.txt..."
+  echo "  Installing dependencies..."
   pip install -r requirements.txt -q
 else
   source venv/bin/activate
 fi
 
-# Check if model files exist; if not, prompt to train
-if [ ! -f "$PROJECT_ROOT/models/isolation_forest.pkl" ] || [ ! -f "$PROJECT_ROOT/models/autoencoder.pt" ]; then
-  echo "  ⚠️  Trained model files not found in models/ directory."
-  if [ ! -f "$PROJECT_ROOT/data/raw/ai4i2020.csv" ]; then
-    echo "  Downloading AI4I 2020 dataset from UCI repository..."
-    python ml/download_dataset.py
+# Ensure log directory exists before uvicorn starts
+mkdir -p logs
+
+# ── 3. Train models if missing ────────────────────────────────────────────────
+echo ""
+echo "[3/5] Checking model artefacts..."
+
+train_if_missing() {
+  local label="$1"; local marker="$2"; local download="$3"; local train1="$4"; local train2="$5"
+  if [ ! -f "$PROJECT_ROOT/$marker" ]; then
+    echo "  [$label] models not found — training now..."
+    [ -n "$download" ] && python $download
+    python $train1
+    [ -n "$train2" ] && python $train2
+    echo "  [$label] ✓ Training complete."
+  else
+    echo "  [$label] ✓ Models found."
   fi
-  echo "  Training Isolation Forest baseline..."
-  python ml/train_isolation_forest.py
-  echo "  Training Deep Autoencoder baseline..."
-  python ml/train_autoencoder.py
-fi
-
-# Start FastAPI Backend in Background
-echo "  Starting FastAPI backend on http://localhost:8000 ..."
-uvicorn app.main:app --port 8000 &
-BACKEND_PID=$!
-echo "  ✓ FastAPI backend running (PID: $BACKEND_PID)"
-
-# 3. Setup / Start React Frontend
-echo ""
-echo "[3/4] Starting React Dashboard on http://localhost:3000 ..."
-cd "$PROJECT_ROOT/frontend"
-if [ ! -d "node_modules" ]; then
-  echo "  Installing frontend dependencies (npm install)..."
-  npm install --silent
-fi
-
-npm run dev -- --port 3000 &
-FRONTEND_PID=$!
-echo "  ✓ React frontend running (PID: $FRONTEND_PID)"
-
-# 4. Prompt for Simulator
-echo ""
-echo "======================================================================"
-echo "🚀 System is Live!"
-echo "   - React Dashboard:  http://localhost:3000"
-echo "   - FastAPI API Docs: http://localhost:8000/docs"
-echo "======================================================================"
-echo ""
-echo "To start streaming telemetry in this terminal, press [ENTER]."
-echo "Or open a separate terminal and run: cd backend && source venv/bin/activate && python ml/simulator.py"
-echo ""
-
-cleanup() {
-  echo ""
-  echo "Shutting down servers..."
-  kill $BACKEND_PID 2>/dev/null || true
-  kill $FRONTEND_PID 2>/dev/null || true
-  echo "Done."
-  exit 0
 }
 
-trap cleanup SIGINT SIGTERM
+train_if_missing "Milling Machine (AI4I)" \
+  "models/isolation_forest.pkl" \
+  "ml/download_dataset.py" \
+  "ml/train_isolation_forest.py" \
+  "ml/train_autoencoder.py"
 
+train_if_missing "Azure PdM Fleet" \
+  "models/azure/isolation_forest.pkl" \
+  "" \
+  "ml/train_azure_models.py" \
+  ""
+
+train_if_missing "Water Pump" \
+  "models/pump/isolation_forest.pkl" \
+  "" \
+  "ml/train_pump_models.py" \
+  ""
+
+# ── 4. Start FastAPI backend ──────────────────────────────────────────────────
+echo ""
+echo "[4/5] Starting FastAPI backend (http://localhost:8000) ..."
+uvicorn app.main:app --host 0.0.0.0 --port 8000 &
+BACKEND_PID=$!
+sleep 2
+echo "  ✓ Backend PID $BACKEND_PID"
+
+# ── 5. Start frontend ─────────────────────────────────────────────────────────
+echo ""
+echo "[5/5] Starting React frontend (http://localhost:3000) ..."
+cd "$PROJECT_ROOT/frontend"
+if [ ! -d "node_modules" ]; then
+  echo "  Installing npm dependencies..."
+  npm install -q
+fi
+npm run dev -- --port 3000 &
+FRONTEND_PID=$!
+sleep 2
+echo "  ✓ Frontend PID $FRONTEND_PID"
+
+# ── 6. Start all 3 simulators ─────────────────────────────────────────────────
+echo ""
+echo "Starting simulators..."
 cd "$PROJECT_ROOT/backend"
-read -r -p "Press [ENTER] to launch simulator now (or Ctrl-C to exit): " _
-python ml/simulator.py
+
+python ml/simulator.py       &
+MILLING_PID=$!
+echo "  ⚙️  Milling Machine simulator PID $MILLING_PID"
+
+python ml/simulator_azure.py &
+AZURE_PID=$!
+echo "  ☁️  Azure Fleet simulator    PID $AZURE_PID"
+
+python ml/simulator_pump.py  &
+PUMP_PID=$!
+echo "  💧 Water Pump simulator     PID $PUMP_PID"
+
+echo ""
+echo "======================================================================"
+echo "✅ System is running!"
+echo ""
+echo "  Dashboard : http://localhost:3000"
+echo "  API Docs  : http://localhost:8000/docs"
+echo "  Log file  : backend/logs/app.log"
+echo ""
+echo "Press Ctrl+C to stop all processes."
+echo "======================================================================"
+
+# Wait for any process to exit, then clean up all
+trap "kill $BACKEND_PID $FRONTEND_PID $MILLING_PID $AZURE_PID $PUMP_PID 2>/dev/null; echo 'All processes stopped.'" EXIT
+wait
