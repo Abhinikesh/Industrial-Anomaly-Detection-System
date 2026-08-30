@@ -1,35 +1,39 @@
 """
-Loads both trained models once at module import time so each /ingest
-request doesn't re-read files from disk.
+Anomaly scoring engine with a machine-type model registry.
 
-We load: Isolation Forest (joblib), StandardScaler (joblib),
-         Autoencoder weights (PyTorch), and the threshold JSON.
+Models are loaded once at module import time (not per-request) for speed.
+
+Architecture
+------------
+_MODEL_REGISTRY maps machine_type -> bundle dict containing:
+    iso          : trained IsolationForest
+    scaler       : fitted StandardScaler (same feature space as IF)
+    ae           : loaded SensorAutoencoder (eval mode)
+    ae_threshold : float — reconstruction error cutoff (mean + 2σ)
+    feature_order: list[str] — key order into sensor_values dict
+
+Adding a new machine type in the future:
+  1. Train & save new model artefacts.
+  2. Add a new entry to _MACHINE_MODEL_PATHS.
+  3. Everything else (scoring, routing, storage) works automatically.
 """
 
 import os
 import json
 import joblib
 import numpy as np
-import pandas as pd
 import torch
 import torch.nn as nn
+from typing import Dict, Any, Optional
 
-BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
-MODEL_DIR   = os.path.join(BASE_DIR, "../../../models")
-
-FEATURE_ORDER = [
-    "air_temp",
-    "process_temp",
-    "rpm",
-    "torque",
-    "tool_wear",
-]
+BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
+MODEL_DIR = os.path.join(BASE_DIR, "../../../models")
 
 
-# ── Autoencoder definition (must match train_autoencoder.py) ───────────────────
+# ── Autoencoder definition (must match train_autoencoder.py) ──────────────────
 
 class SensorAutoencoder(nn.Module):
-    def __init__(self, n_features=5):
+    def __init__(self, n_features: int = 5):
         super().__init__()
         self.encoder = nn.Sequential(
             nn.Linear(n_features, 3), nn.ReLU(),
@@ -44,118 +48,170 @@ class SensorAutoencoder(nn.Module):
         return self.decoder(self.encoder(x))
 
 
-# ── load once with explicit error reporting ────────────────────────────────────
+# ── Machine-type → model file paths ──────────────────────────────────────────
+# To register a new machine type, add a new entry here with paths to its
+# trained artefacts and the feature_order that matches its scaler/model.
 
-_iso = None
-_scaler = None
-_ae = None
-_ae_threshold = None
-_models_ready = False
-_model_error_msg = ""
+_MACHINE_MODEL_PATHS: Dict[str, dict] = {
+    "milling_machine": {
+        "iso_path":    os.path.join(MODEL_DIR, "isolation_forest.pkl"),
+        "scaler_path": os.path.join(MODEL_DIR, "scaler.pkl"),
+        "ae_path":     os.path.join(MODEL_DIR, "autoencoder.pt"),
+        "thresh_path": os.path.join(MODEL_DIR, "autoencoder_threshold.json"),
+        # must match the column order used during scaler/model training
+        "feature_order": [
+            "air_temp",
+            "process_temp",
+            "rpm",
+            "torque",
+            "tool_wear",
+        ],
+        "n_features": 5,
+    },
+    # Future example (uncomment and provide artefacts when ready):
+    # "hydraulic_press": {
+    #     "iso_path":    os.path.join(MODEL_DIR, "hydraulic_iso.pkl"),
+    #     "scaler_path": os.path.join(MODEL_DIR, "hydraulic_scaler.pkl"),
+    #     "ae_path":     os.path.join(MODEL_DIR, "hydraulic_ae.pt"),
+    #     "thresh_path": os.path.join(MODEL_DIR, "hydraulic_ae_threshold.json"),
+    #     "feature_order": ["pressure", "flow_rate", "temperature", "vibration"],
+    #     "n_features": 4,
+    # },
+}
 
 
-def load_models_safely():
-    global _iso, _scaler, _ae, _ae_threshold, _models_ready, _model_error_msg
+# ── Runtime model registry (populated by load_models_safely) ─────────────────
 
-    iso_path    = os.path.join(MODEL_DIR, "isolation_forest.pkl")
-    scaler_path = os.path.join(MODEL_DIR, "scaler.pkl")
-    ae_path     = os.path.join(MODEL_DIR, "autoencoder.pt")
-    thresh_path = os.path.join(MODEL_DIR, "autoencoder_threshold.json")
+_MODEL_REGISTRY:   Dict[str, dict] = {}   # machine_type -> loaded bundle
+_registry_errors:  Dict[str, str]  = {}   # machine_type -> error msg if any
+
+
+def load_models_safely() -> None:
+    """Load all registered machine-type models into _MODEL_REGISTRY.
+
+    Called once at module import.  Failures per machine type are logged but
+    don't prevent other types from loading.
+    """
+    for machine_type, paths in _MACHINE_MODEL_PATHS.items():
+        _load_single_type(machine_type, paths)
+
+
+def _load_single_type(machine_type: str, paths: dict) -> None:
+    iso_path    = paths["iso_path"]
+    scaler_path = paths["scaler_path"]
+    ae_path     = paths["ae_path"]
+    thresh_path = paths["thresh_path"]
 
     missing = []
-    if not os.path.exists(iso_path):
-        missing.append(f"Isolation Forest: {iso_path}")
-    if not os.path.exists(scaler_path):
-        missing.append(f"Scaler: {scaler_path}")
-    if not os.path.exists(ae_path):
-        missing.append(f"Autoencoder Weights: {ae_path}")
-    if not os.path.exists(thresh_path):
-        missing.append(f"Autoencoder Threshold: {thresh_path}")
+    for label, p in [
+        ("Isolation Forest",  iso_path),
+        ("Scaler",            scaler_path),
+        ("Autoencoder Weights", ae_path),
+        ("Autoencoder Threshold", thresh_path),
+    ]:
+        if not os.path.exists(p):
+            missing.append(f"{label}: {p}")
 
     if missing:
-        _models_ready = False
-        _model_error_msg = "Missing model files. Run `python ml/train_isolation_forest.py` and `python ml/train_autoencoder.py`."
-        print("\n" + "=" * 70)
-        print("⚠️  [ANOMALY SERVICE WARNING] Model files not found in models/ directory!")
-        print("Missing required artifacts:")
-        for m in missing:
-            print(f"  - {m}")
-        print("\nTo generate and save all model artifacts, run:")
-        print("  cd backend")
-        print("  python ml/train_isolation_forest.py")
-        print("  python ml/train_autoencoder.py")
-        print("=" * 70 + "\n")
-        return False
+        msg = (
+            f"Missing model files for machine_type='{machine_type}'. "
+            "Run the training scripts first.\n  " + "\n  ".join(missing)
+        )
+        _registry_errors[machine_type] = msg
+        print(f"\n[anomaly_service] ⚠️  {msg}\n")
+        return
 
     try:
-        _iso    = joblib.load(iso_path)
-        _scaler = joblib.load(scaler_path)
+        iso    = joblib.load(iso_path)
+        scaler = joblib.load(scaler_path)
 
-        ae_model = SensorAutoencoder(n_features=5)
-        ae_model.load_state_dict(torch.load(ae_path, map_location="cpu", weights_only=True))
+        ae_model = SensorAutoencoder(n_features=paths["n_features"])
+        ae_model.load_state_dict(
+            torch.load(ae_path, map_location="cpu", weights_only=True)
+        )
         ae_model.eval()
-        _ae = ae_model
 
         with open(thresh_path) as f:
-            thresh_cfg = json.load(f)
-        _ae_threshold = thresh_cfg["threshold"]
+            ae_threshold = json.load(f)["threshold"]
 
-        _models_ready = True
-        _model_error_msg = ""
-        print("[anomaly_service] ✓ All models (Isolation Forest + Autoencoder) successfully loaded.")
-        return True
+        _MODEL_REGISTRY[machine_type] = {
+            "iso":          iso,
+            "scaler":       scaler,
+            "ae":           ae_model,
+            "ae_threshold": ae_threshold,
+            "feature_order": paths["feature_order"],
+        }
+        print(
+            f"[anomaly_service] ✓ Models loaded for machine_type='{machine_type}' "
+            f"(IF + AE, threshold={ae_threshold:.5f})"
+        )
     except Exception as err:
-        _models_ready = False
-        _model_error_msg = f"Error loading models: {err}"
-        print(f"[anomaly_service] ⚠️ Error loading models: {err}")
-        return False
+        msg = f"Error loading models for '{machine_type}': {err}"
+        _registry_errors[machine_type] = msg
+        print(f"[anomaly_service] ⚠️  {msg}")
 
 
 # Initial load at module import
 load_models_safely()
 
 
-# ── scoring ────────────────────────────────────────────────────────────────────
+# ── Per-request scoring ───────────────────────────────────────────────────────
 
 def score_reading(payload: dict) -> dict:
     """
-    Takes a dict with the 5 sensor values, returns scores + flags from both models.
-    If models aren't ready, returns a fallback dictionary with model_warning.
+    Score one sensor reading using the model bundle for its machine_type.
+
+    payload must contain:
+      - machine_type : str  (default "milling_machine")
+      - sensor_values: dict  (keys must match the bundle's feature_order)
+
+    Returns a dict with iso_score, iso_flag, ae_score, ae_flag, is_anomaly.
+    On failure, returns zeroed-out fallback with a model_warning key.
     """
-    if not _models_ready:
-        return {
-            "iso_score": 0.0,
-            "iso_flag": 0,
-            "ae_score":  0.0,
-            "ae_flag":   0,
-            "is_anomaly": False,
-            "model_warning": _model_error_msg or "Models not loaded. Train models before scoring.",
-        }
+    machine_type  = payload.get("machine_type", "milling_machine")
+    sensor_values = payload.get("sensor_values", {})
 
+    # ── Look up the correct model bundle ─────────────────────────────────────
+    bundle = _MODEL_REGISTRY.get(machine_type)
+    if bundle is None:
+        err_msg = _registry_errors.get(
+            machine_type,
+            f"No models registered for machine_type='{machine_type}'. "
+            "Add artefact paths to _MACHINE_MODEL_PATHS and retrain.",
+        )
+        return _fallback(err_msg)
+
+    # ── Build feature vector in correct order ─────────────────────────────────
+    feature_order = bundle["feature_order"]
     try:
-        raw_df = pd.DataFrame([{
-            "Air temperature [K]":     payload["air_temp"],
-            "Process temperature [K]": payload["process_temp"],
-            "Rotational speed [rpm]":  payload["rpm"],
-            "Torque [Nm]":             payload["torque"],
-            "Tool wear [min]":         payload["tool_wear"],
-        }])
+        raw_values = [float(sensor_values[k]) for k in feature_order]
+    except KeyError as ke:
+        return _fallback(
+            f"sensor_values missing key {ke} required for '{machine_type}'. "
+            f"Expected keys: {feature_order}"
+        )
 
-        X = _scaler.transform(raw_df)
+    # ── Score with Isolation Forest ───────────────────────────────────────────
+    try:
+        scaler = bundle["scaler"]
+        iso    = bundle["iso"]
+        ae     = bundle["ae"]
+        thresh = bundle["ae_threshold"]
 
-        # Isolation Forest scoring
-        iso_raw_score = float(-_iso.score_samples(X)[0])
-        iso_pred      = _iso.predict(X)[0]       # -1 or +1
+        X = scaler.transform([raw_values])
+
+        iso_raw_score = float(-iso.score_samples(X)[0])
+        iso_pred      = iso.predict(X)[0]          # -1 = anomaly, +1 = normal
         iso_flag      = 1 if iso_pred == -1 else 0
 
-        # Autoencoder scoring
+        # ── Score with Autoencoder ────────────────────────────────────────────
         t = torch.tensor(X, dtype=torch.float32)
         with torch.no_grad():
-            recon = _ae(t).numpy()
+            recon = ae(t).numpy()
         ae_score = float(np.mean((X - recon) ** 2))
-        ae_flag  = 1 if ae_score > _ae_threshold else 0
+        ae_flag  = 1 if ae_score > thresh else 0
 
-        # Union ensemble logic (OR)
+        # ── Union ensemble (OR) ───────────────────────────────────────────────
         is_anomaly = bool(iso_flag or ae_flag)
 
         return {
@@ -165,13 +221,18 @@ def score_reading(payload: dict) -> dict:
             "ae_flag":    ae_flag,
             "is_anomaly": is_anomaly,
         }
+
     except Exception as e:
-        print(f"[anomaly_service] Scoring exception: {e}")
-        return {
-            "iso_score": 0.0,
-            "iso_flag": 0,
-            "ae_score": 0.0,
-            "ae_flag": 0,
-            "is_anomaly": False,
-            "model_warning": f"Scoring failure: {e}",
-        }
+        print(f"[anomaly_service] Scoring exception for '{machine_type}': {e}")
+        return _fallback(f"Scoring failure for '{machine_type}': {e}")
+
+
+def _fallback(warning: str) -> dict:
+    return {
+        "iso_score":     0.0,
+        "iso_flag":      0,
+        "ae_score":      0.0,
+        "ae_flag":       0,
+        "is_anomaly":    False,
+        "model_warning": warning,
+    }

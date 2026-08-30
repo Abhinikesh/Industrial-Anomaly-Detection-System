@@ -1,5 +1,5 @@
-from datetime import datetime, timezone
-from app.database import sensor_readings, anomalies
+from typing import Optional
+from app.database import sensor_readings
 
 
 def save_reading(doc: dict):
@@ -7,40 +7,61 @@ def save_reading(doc: dict):
     sensor_readings.insert_one(doc)
 
 
-def get_recent_readings(limit: int = 100) -> list:
-    """Fetch the most recent N readings for the live chart, newest first."""
+# ── Query helpers ─────────────────────────────────────────────────────────────
+
+def _type_filter(machine_type: Optional[str]) -> dict:
+    """Return a MongoDB filter dict scoped to a machine type (or empty = all)."""
+    return {"machine_type": machine_type} if machine_type else {}
+
+
+def get_recent_readings(limit: int = 100, machine_type: Optional[str] = None) -> list:
+    """Fetch the most recent N readings for the live chart, newest first.
+
+    Pass machine_type to scope results to a single fleet type (e.g. 'milling_machine').
+    Omit (or pass None) to return readings across all machine types.
+    """
     cursor = (
         sensor_readings
-        .find({}, {"_id": 0})        # exclude Mongo _id from response
+        .find(_type_filter(machine_type), {"_id": 0})
         .sort("timestamp", -1)
         .limit(limit)
     )
     return list(cursor)
 
 
-def get_anomalies(limit: int = 200) -> list:
-    """Fetch readings flagged as anomalies, most recent first."""
+def get_anomalies(limit: int = 200, machine_type: Optional[str] = None) -> list:
+    """Fetch readings flagged as anomalies, most recent first.
+
+    Optionally scoped to one machine_type.
+    """
+    filt = {**_type_filter(machine_type), "is_anomaly": True}
     cursor = (
         sensor_readings
-        .find({"is_anomaly": True}, {"_id": 0})
+        .find(filt, {"_id": 0})
         .sort("timestamp", -1)
         .limit(limit)
     )
     return list(cursor)
 
 
-def get_reading_stats() -> dict:
-    """Summary counts for the dashboard header cards."""
-    total     = sensor_readings.count_documents({})
-    anomaly_n = sensor_readings.count_documents({"is_anomaly": True})
-    iso_only  = sensor_readings.count_documents({"iso_flag": 1, "ae_flag":  0})
-    ae_only   = sensor_readings.count_documents({"iso_flag": 0, "ae_flag":  1})
-    both      = sensor_readings.count_documents({"iso_flag": 1, "ae_flag":  1})
+def get_reading_stats(machine_type: Optional[str] = None) -> dict:
+    """Summary counts for the dashboard header cards.
+
+    When machine_type is provided, all counts are scoped to that type.
+    """
+    base = _type_filter(machine_type)
+
+    total     = sensor_readings.count_documents(base)
+    anomaly_n = sensor_readings.count_documents({**base, "is_anomaly": True})
+    iso_only  = sensor_readings.count_documents({**base, "iso_flag": 1, "ae_flag": 0})
+    ae_only   = sensor_readings.count_documents({**base, "iso_flag": 0, "ae_flag": 1})
+    both      = sensor_readings.count_documents({**base, "iso_flag": 1, "ae_flag": 1})
 
     return {
         "total_readings":  total,
         "total_anomalies": anomaly_n,
         "anomaly_rate":    round(anomaly_n / total * 100, 2) if total else 0.0,
+        "machine_type":    machine_type or "all",
         "flagged_by": {
             "isolation_forest_only": iso_only,
             "autoencoder_only":      ae_only,
@@ -48,6 +69,8 @@ def get_reading_stats() -> dict:
         },
     }
 
+
+# ── Metric helpers ────────────────────────────────────────────────────────────
 
 def _calc_metrics(tp: int, fp: int, fn: int, tn: int) -> dict:
     precision = round(tp / (tp + fp), 3) if (tp + fp) > 0 else 0.0
@@ -69,6 +92,9 @@ def get_model_comparison_stats() -> dict:
     Computes live streaming comparison metrics for Isolation Forest vs Autoencoder
     evaluated against true_failure on all stored readings in MongoDB.
     Safely handles empty database state (0 readings) without throwing division errors.
+
+    Note: This is intentionally global (no machine_type filter) — the model comparison
+    view benchmarks the full dataset for a holistic accuracy picture.
     """
     total = sensor_readings.count_documents({})
     if total == 0:
@@ -106,7 +132,7 @@ def get_model_comparison_stats() -> dict:
     fn_iso = sensor_readings.count_documents({"iso_flag": 0, "true_failure": 1})
     tn_iso = sensor_readings.count_documents({"iso_flag": 0, "true_failure": 0})
     iso_metrics = _calc_metrics(tp_iso, fp_iso, fn_iso, tn_iso)
-    iso_metrics["flagged"] = iso_flagged
+    iso_metrics["flagged"]     = iso_flagged
     iso_metrics["flagged_pct"] = round(iso_flagged / total * 100, 2)
 
     # Autoencoder metrics
@@ -116,7 +142,7 @@ def get_model_comparison_stats() -> dict:
     fn_ae = sensor_readings.count_documents({"ae_flag": 0, "true_failure": 1})
     tn_ae = sensor_readings.count_documents({"ae_flag": 0, "true_failure": 0})
     ae_metrics = _calc_metrics(tp_ae, fp_ae, fn_ae, tn_ae)
-    ae_metrics["flagged"] = ae_flagged
+    ae_metrics["flagged"]     = ae_flagged
     ae_metrics["flagged_pct"] = round(ae_flagged / total * 100, 2)
 
     # Agreement / Disagreement
@@ -125,10 +151,10 @@ def get_model_comparison_stats() -> dict:
     iso_only     = sensor_readings.count_documents({"iso_flag": 1, "ae_flag": 0})
     ae_only      = sensor_readings.count_documents({"iso_flag": 0, "ae_flag": 1})
 
-    agreed_count    = both_flagged + both_normal
-    disagreed_count = iso_only + ae_only
-    agreement_pct   = round(agreed_count / total * 100, 2)
-    disagreement_pct= round(disagreed_count / total * 100, 2)
+    agreed_count     = both_flagged + both_normal
+    disagreed_count  = iso_only + ae_only
+    agreement_pct    = round(agreed_count / total * 100, 2)
+    disagreement_pct = round(disagreed_count / total * 100, 2)
 
     return {
         "total_readings": total,

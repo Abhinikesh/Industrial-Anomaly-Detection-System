@@ -1,3 +1,4 @@
+from typing import Optional
 from fastapi import APIRouter
 from app.services.reading_service import (
     get_recent_readings,
@@ -10,20 +11,43 @@ router = APIRouter(prefix="/readings", tags=["readings"])
 
 
 @router.get("/recent")
-def recent_readings(limit: int = 100):
-    return get_recent_readings(limit)
+def recent_readings(
+    limit: int = 100,
+    machine_type: Optional[str] = None,
+):
+    """Return the most recent N readings.
+
+    Optional query param:
+      ?machine_type=milling_machine   — filter to one fleet type
+      (omit to return readings across all machine types)
+    """
+    return get_recent_readings(limit=limit, machine_type=machine_type)
 
 
 @router.get("/anomalies")
-def anomaly_readings(limit: int = 200):
-    return get_anomalies(limit)
+def anomaly_readings(
+    limit: int = 200,
+    machine_type: Optional[str] = None,
+):
+    """Return the most recent N anomalous readings.
+
+    Optional query param:
+      ?machine_type=milling_machine   — filter to one fleet type
+    """
+    return get_anomalies(limit=limit, machine_type=machine_type)
 
 
 @router.get("/stats")
-def reading_stats():
-    return get_reading_stats()
+def reading_stats(machine_type: Optional[str] = None):
+    """Return aggregate counts (total, anomaly rate, flagged-by breakdown).
+
+    Optional query param:
+      ?machine_type=milling_machine   — scope counts to one fleet type
+    """
+    return get_reading_stats(machine_type=machine_type)
 
 
 @router.get("/model-comparison")
 def model_comparison():
+    """Return side-by-side IF vs AE benchmark metrics across all stored readings."""
     return get_model_comparison_stats()
