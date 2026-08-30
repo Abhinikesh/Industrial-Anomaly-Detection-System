@@ -11,3 +11,4 @@ joblib
 torch
 matplotlib
 seaborn
+kaggle>=1.6

@@ -68,15 +68,20 @@ _MACHINE_MODEL_PATHS: Dict[str, dict] = {
         ],
         "n_features": 5,
     },
-    # Future example (uncomment and provide artefacts when ready):
-    # "hydraulic_press": {
-    #     "iso_path":    os.path.join(MODEL_DIR, "hydraulic_iso.pkl"),
-    #     "scaler_path": os.path.join(MODEL_DIR, "hydraulic_scaler.pkl"),
-    #     "ae_path":     os.path.join(MODEL_DIR, "hydraulic_ae.pt"),
-    #     "thresh_path": os.path.join(MODEL_DIR, "hydraulic_ae_threshold.json"),
-    #     "feature_order": ["pressure", "flow_rate", "temperature", "vibration"],
-    #     "n_features": 4,
-    # },
+    # Azure Predictive Maintenance — 100-machine fleet (4-sensor telemetry)
+    # Trained by:  python ml/train_azure_models.py
+    # Dataset:     microsoft-azure-predictive-maintenance (Kaggle)
+    # Features:    voltage, rotation, pressure, vibration
+    "fleet_machine": {
+        "iso_path":    os.path.join(MODEL_DIR, "azure/isolation_forest.pkl"),
+        "scaler_path": os.path.join(MODEL_DIR, "azure/scaler.pkl"),
+        "ae_path":     os.path.join(MODEL_DIR, "azure/autoencoder.pt"),
+        "thresh_path": os.path.join(MODEL_DIR, "azure/autoencoder_threshold.json"),
+        "feature_order": ["voltage", "rotation", "pressure", "vibration"],
+        "n_features": 4,
+    },
+    # Add future machine types here following the same pattern.
+    # Each type needs its own trained artefacts in a subdirectory of models/.
 }
 
 
