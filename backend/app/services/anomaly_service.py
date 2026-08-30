@@ -30,9 +30,13 @@ BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
 MODEL_DIR = os.path.join(BASE_DIR, "../../../models")
 
 
-# ── Autoencoder definition (must match train_autoencoder.py) ──────────────────
+# ── Autoencoder definitions ───────────────────────────────────────────────────
 
-class SensorAutoencoder(nn.Module):
+class StandardAutoencoder(nn.Module):
+    """
+    Standard bottleneck autoencoder (n_features → 3 → 2 → 3 → n_features)
+    used for AI4I milling machine (5 features) and Azure PdM (4 features).
+    """
     def __init__(self, n_features: int = 5):
         super().__init__()
         self.encoder = nn.Sequential(
@@ -48,6 +52,34 @@ class SensorAutoencoder(nn.Module):
         return self.decoder(self.encoder(x))
 
 
+class PumpSensorAutoencoder(nn.Module):
+    """
+    15 → 10 → 5 (bottleneck) → 10 → 15 autoencoder with BatchNorm and Dropout,
+    used for the 15-sensor industrial water pump dataset.
+    """
+    def __init__(self, n_features: int = 15):
+        super().__init__()
+        self.encoder = nn.Sequential(
+            nn.Linear(n_features, 10),
+            nn.BatchNorm1d(10),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(10, 5),
+            nn.ReLU(),
+        )
+        self.decoder = nn.Sequential(
+            nn.Linear(5, 10),
+            nn.ReLU(),
+            nn.Linear(10, n_features),
+        )
+
+    def forward(self, x):
+        return self.decoder(self.encoder(x))
+
+
+SensorAutoencoder = StandardAutoencoder
+
+
 # ── Machine-type → model file paths ──────────────────────────────────────────
 # To register a new machine type, add a new entry here with paths to its
 # trained artefacts and the feature_order that matches its scaler/model.
@@ -58,6 +90,7 @@ _MACHINE_MODEL_PATHS: Dict[str, dict] = {
         "scaler_path": os.path.join(MODEL_DIR, "scaler.pkl"),
         "ae_path":     os.path.join(MODEL_DIR, "autoencoder.pt"),
         "thresh_path": os.path.join(MODEL_DIR, "autoencoder_threshold.json"),
+        "model_class": StandardAutoencoder,
         # must match the column order used during scaler/model training
         "feature_order": [
             "air_temp",
@@ -77,6 +110,7 @@ _MACHINE_MODEL_PATHS: Dict[str, dict] = {
         "scaler_path": os.path.join(MODEL_DIR, "azure/scaler.pkl"),
         "ae_path":     os.path.join(MODEL_DIR, "azure/autoencoder.pt"),
         "thresh_path": os.path.join(MODEL_DIR, "azure/autoencoder_threshold.json"),
+        "model_class": StandardAutoencoder,
         "feature_order": ["voltage", "rotation", "pressure", "vibration"],
         "n_features": 4,
     },
@@ -91,6 +125,7 @@ _MACHINE_MODEL_PATHS: Dict[str, dict] = {
         "scaler_path": os.path.join(MODEL_DIR, "pump/scaler.pkl"),
         "ae_path":     os.path.join(MODEL_DIR, "pump/autoencoder.pt"),
         "thresh_path": os.path.join(MODEL_DIR, "pump/autoencoder_threshold.json"),
+        "model_class": PumpSensorAutoencoder,
         # feature_order is loaded from thresh_path at startup (set to None here
         # so load_models_safely knows to read it from the JSON file)
         "feature_order": None,
@@ -162,7 +197,8 @@ def _load_single_type(machine_type: str, paths: dict) -> None:
             scaler.n_features_in_ if hasattr(scaler, "n_features_in_") else len(feature_order)
         )
 
-        ae_model = SensorAutoencoder(n_features=n_features)
+        ae_class = paths.get("model_class", StandardAutoencoder)
+        ae_model = ae_class(n_features=n_features)
         ae_model.load_state_dict(
             torch.load(ae_path, map_location="cpu", weights_only=True)
         )

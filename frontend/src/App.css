@@ -1015,3 +1015,286 @@
   font-size: 0.78rem;
   margin-top: 1rem;
 }
+
+/* ── Machine Type Selector ─────────────────────────────────────────────────── */
+
+.machine-type-selector {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  padding: 0.75rem 1.1rem;
+  flex-wrap: wrap;
+}
+
+.selector-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+.machine-type-tabs {
+  display: flex;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.machine-tab {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.9rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-inset);
+  color: var(--text-dim);
+  font-size: 0.83rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  font-family: inherit;
+}
+
+.machine-tab:hover {
+  border-color: var(--border-accent);
+  color: var(--text-main);
+  background: var(--bg-card-alt);
+}
+
+.machine-tab-active {
+  background: color-mix(in srgb, var(--tab-color, #38bdf8) 15%, transparent);
+  border-color: var(--tab-color, #38bdf8);
+  color: var(--tab-color, #38bdf8);
+  font-weight: 600;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--tab-color, #38bdf8) 30%, transparent);
+}
+
+/* ── Section title row ─────────────────────────────────────────────────────── */
+
+.section-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.2rem 0;
+}
+
+.section-title-row h3 {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text-main);
+  margin: 0;
+}
+
+/* ── Fleet Overview Grid ───────────────────────────────────────────────────── */
+
+.fleet-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1rem;
+}
+
+.fleet-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  padding: 1.1rem 1.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  border-left: 3px solid var(--fleet-color, #64748b);
+  cursor: default;
+}
+
+.fleet-card:hover {
+  border-color: var(--fleet-color, #64748b);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+}
+
+.fleet-card-alert {
+  background: rgba(239, 68, 68, 0.05);
+  border-color: rgba(239, 68, 68, 0.4);
+  border-left-color: #ef4444;
+}
+
+.fleet-card-ok {
+  border-left-color: var(--fleet-color, #10b981);
+}
+
+.fleet-card-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.fleet-icon {
+  font-size: 1.6rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.fleet-machine-label {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text-main);
+  line-height: 1.3;
+}
+
+.fleet-machine-desc {
+  line-height: 1.4;
+  margin-top: 0.1rem;
+}
+
+.fleet-status-pill {
+  margin-left: auto;
+  white-space: nowrap;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 0.22rem 0.6rem;
+  border-radius: 20px;
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
+}
+
+.pill-ok {
+  background: var(--color-nominal-bg);
+  color: var(--color-nominal);
+  border: 1px solid var(--color-nominal-border);
+}
+
+.pill-alert {
+  background: var(--color-alert-bg);
+  color: var(--color-alert);
+  border: 1px solid var(--color-alert-border);
+  animation: pill-pulse 2s ease-in-out infinite;
+}
+
+@keyframes pill-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.6; }
+}
+
+.fleet-stats-row {
+  display: flex;
+  gap: 1rem;
+}
+
+.fleet-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.fleet-stat strong {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.btn-view-detail {
+  align-self: flex-end;
+  background: color-mix(in srgb, var(--fleet-color, #38bdf8) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--fleet-color, #38bdf8) 40%, transparent);
+  color: var(--fleet-color, #38bdf8);
+  padding: 0.35rem 0.85rem;
+  border-radius: 7px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s, box-shadow 0.15s;
+}
+
+.btn-view-detail:hover {
+  background: color-mix(in srgb, var(--fleet-color, #38bdf8) 22%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--fleet-color, #38bdf8) 50%, transparent);
+}
+
+/* ── TypeSummaryCard (ModelComparison "All" grid) ──────────────────────────── */
+
+.type-summary-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--type-color, #64748b);
+  border-radius: 12px;
+  padding: 1rem 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  cursor: pointer;
+  transition: border-color 0.18s, box-shadow 0.18s;
+}
+
+.type-summary-card:hover {
+  border-color: var(--type-color, #38bdf8);
+  box-shadow: 0 4px 18px rgba(0,0,0,0.22);
+}
+
+.type-summary-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.7rem;
+}
+
+.type-summary-metrics {
+  display: flex;
+  gap: 1.2rem;
+  font-size: 0.82rem;
+}
+
+.type-summary-metrics > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+/* ── MetricBar progress bars ───────────────────────────────────────────────── */
+
+.metric-bar-track {
+  flex: 1;
+  height: 8px;
+  background: var(--bg-inset);
+  border-radius: 4px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  overflow: visible;
+  min-width: 80px;
+}
+
+.metric-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  background: linear-gradient(90deg, #6366f1, #a855f7);
+  transition: width 0.4s ease;
+}
+
+.metric-bar-value {
+  position: absolute;
+  right: -44px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--text-main);
+  white-space: nowrap;
+}
+
+.metric-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.35rem 0;
+}
+
+/* ── Utility text colours ──────────────────────────────────────────────────── */
+
+.text-emerald { color: #10b981; }
+.text-cyan    { color: #06b6d4; }
+

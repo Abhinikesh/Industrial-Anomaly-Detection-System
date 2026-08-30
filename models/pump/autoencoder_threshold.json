@@ -1,0 +1,22 @@
+{
+  "threshold": 0.23943621154830902,
+  "threshold_sigma": 2,
+  "features": [
+    "sensor_04",
+    "sensor_00",
+    "sensor_10",
+    "sensor_06",
+    "sensor_11",
+    "sensor_07",
+    "sensor_02",
+    "sensor_08",
+    "sensor_12",
+    "sensor_09",
+    "sensor_01",
+    "sensor_03",
+    "sensor_05",
+    "sensor_40",
+    "sensor_48"
+  ],
+  "contamination": 0.06574074074074074
+}

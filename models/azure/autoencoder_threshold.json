@@ -1,0 +1,11 @@
+{
+  "threshold": 1.5600753934595977,
+  "threshold_sigma": 2,
+  "features": [
+    "voltage",
+    "rotation",
+    "pressure",
+    "vibration"
+  ],
+  "contamination": 0.020433740440588974
+}

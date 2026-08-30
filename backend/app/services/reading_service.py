@@ -92,7 +92,7 @@ def get_fleet_overview() -> List[dict]:
     pipeline = [
         {
             "$group": {
-                "_id": "$machine_type",
+                "_id":         {"$ifNull": ["$machine_type", "milling_machine"]},
                 "total":       {"$sum": 1},
                 "anomalies":   {"$sum": {"$cond": ["$is_anomaly", 1, 0]}},
                 "latest_ts":   {"$max": "$timestamp"},

@@ -3,430 +3,383 @@ import axios from "axios";
 
 const API_BASE = "http://localhost:8000";
 
+const MACHINE_TYPES = [
+  { key: "all",             label: "All Combined",    icon: "🏭", color: "#94a3b8" },
+  { key: "milling_machine", label: "Milling Machine", icon: "⚙️", color: "#38bdf8" },
+  { key: "fleet_machine",   label: "Azure Fleet",     icon: "☁️", color: "#06b6d4" },
+  { key: "water_pump",      label: "Water Pump",      icon: "💧", color: "#10b981" },
+];
+
+// Per-machine-type architecture notes shown in the model cards
+const ARCH_NOTES = {
+  milling_machine: {
+    if: "100 isolation trees · 5 features (air_temp, process_temp, rpm, torque, tool_wear) · 3.4% contamination",
+    ae: "5 → 3 → 2 → 3 → 5 bottleneck · trained on normal-only data · threshold = mean + 2σ",
+  },
+  fleet_machine: {
+    if: "150 isolation trees · 4 features (voltage, rotation, pressure, vibration) · 2.04% contamination",
+    ae: "4 → 3 → 2 → 3 → 4 bottleneck · tightly coupled sensor channels benefit encoder · threshold = mean + 2σ",
+  },
+  water_pump: {
+    if: "150 isolation trees · 15 top-correlated sensors · 6.57% contamination",
+    ae: "15 → 10 → 5 → 10 → 15 bottleneck · captures 5 dominant normal operating modes · BatchNorm + Dropout(0.1)",
+  },
+  all: {
+    if: "Combined across all fleet types (milling machine, Azure fleet, water pump)",
+    ae: "Combined across all fleet types — note: metrics mix different model pairs and sensor spaces",
+  },
+};
+
+function MetricBar({ value, max = 1 }) {
+  const pct = Math.min((value ?? 0) / max, 1) * 100;
+  return (
+    <div className="metric-bar-track">
+      <div className="metric-bar-fill" style={{ width: `${pct}%` }} />
+      <span className="metric-bar-value">{(value ?? 0).toFixed(3)}</span>
+    </div>
+  );
+}
+
+function ModelCard({ title, icon, badgeLabel, badgeClass, flagged, flaggedPct, data, archNote, colorClass }) {
+  return (
+    <div className={`model-card ${colorClass}`}>
+      <div className="model-card-header">
+        <div>
+          <h3>{icon} {title}</h3>
+          <span className={`badge-model-type ${badgeClass}`}>{badgeLabel}</span>
+        </div>
+        <span className={`flagged-badge ${colorClass === "card-ae-theme" ? "text-purple" : "text-blue"}`}>
+          {flagged ?? 0} flagged ({flaggedPct ?? 0}%)
+        </span>
+      </div>
+
+      <div className="metrics-list">
+        <div className="metric-row">
+          <span className="metric-name">Precision:</span>
+          <MetricBar value={data?.precision} />
+        </div>
+        <div className="metric-row highlight-metric">
+          <span className="metric-name">Recall:</span>
+          <MetricBar value={data?.recall} />
+        </div>
+        <div className="metric-row highlight-metric">
+          <span className="metric-name">F1-Score:</span>
+          <MetricBar value={data?.f1} />
+        </div>
+
+        <div className="matrix-subgrid">
+          <div className="matrix-cell">
+            <span className="dim text-xs">True Pos (TP)</span>
+            <strong className="font-mono">{data?.tp ?? 0}</strong>
+          </div>
+          <div className="matrix-cell">
+            <span className="dim text-xs">False Pos (FP)</span>
+            <strong className="font-mono text-warn">{data?.fp ?? 0}</strong>
+          </div>
+          <div className="matrix-cell">
+            <span className="dim text-xs">False Neg (FN)</span>
+            <strong className="font-mono text-warn">{data?.fn ?? 0}</strong>
+          </div>
+          <div className="matrix-cell">
+            <span className="dim text-xs">True Neg (TN)</span>
+            <strong className="font-mono text-emerald">{data?.tn ?? 0}</strong>
+          </div>
+        </div>
+      </div>
+
+      <div className="model-notes">
+        <strong>Architecture:</strong>
+        <p>{archNote}</p>
+      </div>
+    </div>
+  );
+}
+
+// Compact per-type summary card for the overview grid
+function TypeSummaryCard({ mt, data, onSelect }) {
+  if (!data) return null;
+  const winner = (data.autoencoder?.f1 ?? 0) >= (data.isolation_forest?.f1 ?? 0) ? "AE" : "IF";
+  const winnerF1 = Math.max(data.autoencoder?.f1 ?? 0, data.isolation_forest?.f1 ?? 0);
+  return (
+    <div
+      className="type-summary-card"
+      style={{ "--type-color": mt.color }}
+      onClick={() => onSelect(mt.key)}
+    >
+      <div className="type-summary-top">
+        <span className="fleet-icon">{mt.icon}</span>
+        <div>
+          <div className="fleet-machine-label">{mt.label}</div>
+          <div className="dim text-xs">{data.total_readings.toLocaleString()} readings · {data.true_failures} failures</div>
+        </div>
+      </div>
+      <div className="type-summary-metrics">
+        <div>
+          <span className="dim text-xs">Best F1</span>
+          <strong className="font-mono text-emerald">{winnerF1.toFixed(3)}</strong>
+          <span className="dim text-xs"> ({winner} wins)</span>
+        </div>
+        <div>
+          <span className="dim text-xs">Failure rate</span>
+          <strong className="font-mono">
+            {data.total_readings > 0 ? ((data.true_failures / data.total_readings) * 100).toFixed(1) : "0.0"}%
+          </strong>
+        </div>
+      </div>
+      <button className="btn-view-detail">Details →</button>
+    </div>
+  );
+}
+
 export default function ModelComparison() {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [selectedType, setSelectedType] = useState("all");
+  const [dataByType, setDataByType]     = useState({});
+  const [loading, setLoading]           = useState(true);
+  const [error, setError]               = useState(null);
   const [lastRefreshed, setLastRefreshed] = useState(null);
 
-  const fetchComparison = async () => {
+  const fetchAll = async () => {
+    setLoading(true);
     try {
-      setLoading(true);
-      const res = await axios.get(`${API_BASE}/readings/model-comparison`);
-      setData(res.data);
+      // Fetch comparison stats for all types in parallel
+      const results = await Promise.all(
+        MACHINE_TYPES.map(mt =>
+          axios.get(`${API_BASE}/readings/model-comparison${mt.key !== "all" ? `?machine_type=${mt.key}` : ""}`)
+            .then(r => [mt.key, r.data])
+            .catch(() => [mt.key, null])
+        )
+      );
+      const byType = Object.fromEntries(results);
+      setDataByType(byType);
       setLastRefreshed(new Date().toLocaleTimeString());
       setError(null);
-    } catch (err) {
-      setError("Connection lost to backend on :8000. Unable to refresh live benchmark data.");
+    } catch {
+      setError("Connection lost to backend on :8000.");
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => {
-    fetchComparison();
-  }, []);
+  useEffect(() => { fetchAll(); }, []);
 
-  if (loading && !data) {
+  if (loading && Object.keys(dataByType).length === 0) {
     return (
       <div className="dashboard-loading-state">
         <div className="spinner"></div>
         <h3>Computing Model Benchmark Telemetry...</h3>
-        <p className="dim">Aggregating precision, recall, and agreement metrics across MongoDB records</p>
+        <p className="dim">Aggregating precision, recall, and agreement metrics per fleet type</p>
       </div>
     );
   }
 
-  const isEmpty = data && data.total_readings === 0;
-  const ifData = data?.isolation_forest || {};
-  const aeData = data?.autoencoder || {};
-  const agree = data?.agreement || {};
+  const data    = dataByType[selectedType];
+  const ifData  = data?.isolation_forest || {};
+  const aeData  = data?.autoencoder || {};
+  const agree   = data?.agreement || {};
+  const isEmpty = data?.total_readings === 0;
+  const notes   = ARCH_NOTES[selectedType] || ARCH_NOTES.all;
+  const activeMT = MACHINE_TYPES.find(m => m.key === selectedType);
+
+  const nonAllTypes = MACHINE_TYPES.filter(m => m.key !== "all");
 
   return (
     <div className="model-comparison-container">
-      {/* Header & Controls */}
+      {/* Header */}
       <div className="section-header-row">
         <div>
           <h2>Model Benchmark &amp; Live Evaluation</h2>
-          <p className="dim">
-            Real-time streaming evaluation calculated against true failure labels in MongoDB.
-          </p>
+          <p className="dim">Real-time streaming evaluation calculated against true failure labels in MongoDB.</p>
         </div>
         <div className="header-actions">
           {lastRefreshed && <span className="dim text-sm">Last Synced: <span className="font-mono">{lastRefreshed}</span></span>}
-          <button className="btn-refresh" onClick={fetchComparison} disabled={loading}>
+          <button className="btn-refresh" onClick={fetchAll} disabled={loading}>
             {loading ? "Refreshing..." : "🔄 Refresh Metrics"}
           </button>
         </div>
       </div>
 
-      {error && (
-        <div className="alert-box error">
-          <span>⚠️ {error}</span>
+      {error && <div className="alert-box error"><span>⚠️ {error}</span></div>}
+
+      {/* Machine type selector */}
+      <div className="machine-type-selector">
+        <span className="selector-label">Filter by Fleet</span>
+        <div className="machine-type-tabs">
+          {MACHINE_TYPES.map(mt => (
+            <button
+              key={mt.key}
+              className={`machine-tab ${selectedType === mt.key ? "machine-tab-active" : ""}`}
+              style={selectedType === mt.key ? { "--tab-color": mt.color } : {}}
+              onClick={() => setSelectedType(mt.key)}
+            >
+              <span>{mt.icon}</span>
+              <span>{mt.label}</span>
+            </button>
+          ))}
         </div>
+      </div>
+
+      {/* Per-type summary overview (shown only in "all" mode) */}
+      {selectedType === "all" && (
+        <>
+          <div className="section-title-row">
+            <h3>📊 Per-Fleet Model Performance Overview</h3>
+            <span className="dim text-sm">Click a card to drill into that fleet's detailed metrics</span>
+          </div>
+          <div className="fleet-overview-grid">
+            {nonAllTypes.map(mt => (
+              <TypeSummaryCard
+                key={mt.key}
+                mt={mt}
+                data={dataByType[mt.key]}
+                onSelect={setSelectedType}
+              />
+            ))}
+          </div>
+          <div className="alert-box info">
+            <span>ℹ️ Combined "All" metrics below mix different model pairs and sensor spaces — per-fleet numbers are more meaningful for evaluation.</span>
+          </div>
+        </>
       )}
 
-      {isEmpty && (
-        <div className="alert-box info">
-          <span>ℹ️ <strong>No Telemetry Ingested Yet:</strong> Start the simulator (<code>python ml/simulator.py</code>) to accumulate streaming records for real-time benchmark calculation.</span>
-        </div>
-      )}
-
-      {/* Live Stream Benchmark Grid */}
+      {/* Overview KPI row */}
       <div className="benchmark-overview-grid">
         <div className="overview-metric-card card-total">
-          <span className="kpi-label">Sample Pool Evaluated</span>
+          <span className="kpi-label">Sample Pool</span>
           <span className="kpi-value">{data ? data.total_readings.toLocaleString() : "--"}</span>
           <span className="kpi-sub">
-            {data && data.total_readings > 0
-              ? `${data.true_failures} Failures (${((data.true_failures / data.total_readings) * 100).toFixed(1)}% base rate)`
-              : "0 Failures (0.0% base rate)"}
+            {data?.total_readings > 0
+              ? `${data.true_failures} failures (${((data.true_failures / data.total_readings) * 100).toFixed(1)}% rate)`
+              : "No data yet"}
           </span>
         </div>
 
         <div className="overview-metric-card card-agree">
-          <span className="kpi-label">Model Consensus Rate</span>
-          <span className="kpi-value text-emerald">
-            {data ? `${agree.agreement_pct}%` : "--"}
-          </span>
-          <span className="kpi-sub">
-            {agree.agreed_count?.toLocaleString()} of {data?.total_readings?.toLocaleString()} readings
-          </span>
+          <span className="kpi-label">Model Consensus</span>
+          <span className="kpi-value text-emerald">{data ? `${agree.agreement_pct}%` : "--"}</span>
+          <span className="kpi-sub">{agree.agreed_count?.toLocaleString()} of {data?.total_readings?.toLocaleString()} readings</span>
         </div>
 
         <div className="overview-metric-card card-ae">
-          <span className="kpi-label">Leading F1 Score</span>
+          <span className="kpi-label">Best F1</span>
           <span className="kpi-value text-purple font-mono">
-            {aeData.f1 ? aeData.f1.toFixed(3) : "0.000"}
+            {Math.max(aeData.f1 ?? 0, ifData.f1 ?? 0).toFixed(3)}
           </span>
-          <span className="kpi-sub">PyTorch Deep Autoencoder</span>
+          <span className="kpi-sub">
+            {(aeData.f1 ?? 0) >= (ifData.f1 ?? 0) ? "Autoencoder leads" : "Isolation Forest leads"}
+          </span>
         </div>
 
         <div className="overview-metric-card card-advantage">
           <span className="kpi-label">Recall Advantage</span>
           <span className="kpi-value text-purple font-mono">
-            {aeData.recall && ifData.recall
-              ? `+${((aeData.recall - ifData.recall) * 100).toFixed(1)}%`
+            {aeData.recall != null && ifData.recall != null
+              ? `${aeData.recall >= ifData.recall ? "+" : ""}${((aeData.recall - ifData.recall) * 100).toFixed(1)}% AE`
               : "--"}
           </span>
-          <span className="kpi-sub">AE detected significantly more real failures</span>
+          <span className="kpi-sub">AE vs IF on {activeMT?.label}</span>
         </div>
       </div>
 
-      {/* Side-by-Side Model Comparison Cards */}
+      {isEmpty && (
+        <div className="alert-box info">
+          <span>ℹ️ <strong>No data for {activeMT?.label}:</strong> Start the simulator to accumulate records.</span>
+        </div>
+      )}
+
+      {/* Side-by-side model cards */}
       <div className="comparison-cards-grid">
-        {/* Isolation Forest Card */}
-        <div className="model-card card-if-theme">
-          <div className="model-card-header">
-            <div>
-              <h3>🌲 Isolation Forest</h3>
-              <span className="badge-model-type">Tree-based Random Partitioning</span>
-            </div>
-            <span className="flagged-badge text-blue">
-              {ifData.flagged || 0} flagged ({ifData.flagged_pct || 0}%)
-            </span>
-          </div>
-
-          <div className="metrics-list">
-            <div className="metric-row">
-              <span className="metric-name">Precision:</span>
-              <strong className="metric-val font-mono">{ifData.precision?.toFixed(3) ?? "--"}</strong>
-            </div>
-            <div className="metric-row">
-              <span className="metric-name">Recall:</span>
-              <strong className="metric-val font-mono">{ifData.recall?.toFixed(3) ?? "--"}</strong>
-            </div>
-            <div className="metric-row highlight-metric">
-              <span className="metric-name">F1-Score:</span>
-              <strong className="metric-val font-mono text-blue">{ifData.f1?.toFixed(3) ?? "--"}</strong>
-            </div>
-
-            <div className="matrix-subgrid">
-              <div className="matrix-cell">
-                <span className="dim text-xs">True Pos (TP)</span>
-                <strong className="font-mono">{ifData.tp ?? 0}</strong>
-              </div>
-              <div className="matrix-cell">
-                <span className="dim text-xs">False Pos (FP)</span>
-                <strong className="font-mono text-warn">{ifData.fp ?? 0}</strong>
-              </div>
-              <div className="matrix-cell">
-                <span className="dim text-xs">False Neg (FN)</span>
-                <strong className="font-mono text-warn">{ifData.fn ?? 0}</strong>
-              </div>
-              <div className="matrix-cell">
-                <span className="dim text-xs">True Neg (TN)</span>
-                <strong className="font-mono text-emerald">{ifData.tn ?? 0}</strong>
-              </div>
-            </div>
-          </div>
-
-          <div className="model-notes">
-            <strong>Architecture &amp; Mechanism:</strong>
-            <p>
-              Partitions multi-dimensional feature space using 100 isolation trees with a contamination prior of 3.4%. Isolates anomalies near tree roots without calculating complex non-linear combinations.
-            </p>
-          </div>
-        </div>
-
-        {/* Autoencoder Card */}
-        <div className="model-card featured card-ae-theme">
-          <div className="model-card-header">
-            <div>
-              <h3>🧠 Deep Autoencoder</h3>
-              <span className="badge-model-type badge-purple">PyTorch (MSE Reconstruction)</span>
-            </div>
-            <span className="flagged-badge text-purple">
-              {aeData.flagged || 0} flagged ({aeData.flagged_pct || 0}%)
-            </span>
-          </div>
-
-          <div className="metrics-list">
-            <div className="metric-row">
-              <span className="metric-name">Precision:</span>
-              <strong className="metric-val font-mono">{aeData.precision?.toFixed(3) ?? "--"}</strong>
-            </div>
-            <div className="metric-row highlight-metric-purple">
-              <span className="metric-name">Recall:</span>
-              <strong className="metric-val font-mono text-purple">{aeData.recall?.toFixed(3) ?? "--"}</strong>
-            </div>
-            <div className="metric-row highlight-metric-purple">
-              <span className="metric-name">F1-Score:</span>
-              <strong className="metric-val font-mono text-purple">{aeData.f1?.toFixed(3) ?? "--"}</strong>
-            </div>
-
-            <div className="matrix-subgrid">
-              <div className="matrix-cell">
-                <span className="dim text-xs">True Pos (TP)</span>
-                <strong className="font-mono text-purple">{aeData.tp ?? 0}</strong>
-              </div>
-              <div className="matrix-cell">
-                <span className="dim text-xs">False Pos (FP)</span>
-                <strong className="font-mono text-warn">{aeData.fp ?? 0}</strong>
-              </div>
-              <div className="matrix-cell">
-                <span className="dim text-xs">False Neg (FN)</span>
-                <strong className="font-mono text-warn">{aeData.fn ?? 0}</strong>
-              </div>
-              <div className="matrix-cell">
-                <span className="dim text-xs">True Neg (TN)</span>
-                <strong className="font-mono text-emerald">{aeData.tn ?? 0}</strong>
-              </div>
-            </div>
-          </div>
-
-          <div className="model-notes">
-            <strong>Architecture &amp; Mechanism:</strong>
-            <p>
-              Trained purely on normal sensor sequences through a <code>5 → 3 → 2 → 3 → 5</code> bottleneck. Spikes in reconstruction error (&gt; mean + 2σ) signal multi-sensor physical correlation drift.
-            </p>
-          </div>
-        </div>
+        <ModelCard
+          title="Isolation Forest"
+          icon="🌲"
+          badgeLabel="Tree-based Random Partitioning"
+          badgeClass=""
+          colorClass="card-if-theme"
+          flagged={ifData.flagged}
+          flaggedPct={ifData.flagged_pct}
+          data={ifData}
+          archNote={notes.if}
+        />
+        <ModelCard
+          title="Deep Autoencoder"
+          icon="🧠"
+          badgeLabel="PyTorch (MSE Reconstruction)"
+          badgeClass="badge-purple"
+          colorClass="card-ae-theme featured"
+          flagged={aeData.flagged}
+          flaggedPct={aeData.flagged_pct}
+          data={aeData}
+          archNote={notes.ae}
+        />
       </div>
 
-      {/* Model Agreement & Overlap Breakdown */}
+      {/* Agreement breakdown */}
       <div className="agreement-card">
         <div className="agreement-header">
           <div>
             <h3>Model Agreement &amp; Divergence Analysis</h3>
-            <p className="dim">
-              How frequently both models reach consensus vs where they diverge across telemetry stream:
-            </p>
+            <p className="dim">How frequently both models reach consensus vs where they diverge:</p>
           </div>
-          <span className="agreement-stat-pill text-emerald">
-            {agree.agreement_pct}% Total Agreement
-          </span>
+          <span className="agreement-stat-pill text-emerald">{agree.agreement_pct ?? "--"}% Agreement</span>
         </div>
 
         <div className="agreement-progress-bar">
-          <div
-            className="bar-segment bar-both"
+          <div className="bar-segment bar-both"
             style={{ width: `${(agree.both_flagged / (data?.total_readings || 1)) * 100}%` }}
-            title={`Both Flagged: ${agree.both_flagged}`}
-          ></div>
-          <div
-            className="bar-segment bar-ae"
+            title={`Both Flagged: ${agree.both_flagged}`} />
+          <div className="bar-segment bar-ae"
             style={{ width: `${(agree.ae_only / (data?.total_readings || 1)) * 100}%` }}
-            title={`Autoencoder Only: ${agree.ae_only}`}
-          ></div>
-          <div
-            className="bar-segment bar-if"
+            title={`AE Only: ${agree.ae_only}`} />
+          <div className="bar-segment bar-if"
             style={{ width: `${(agree.iso_only / (data?.total_readings || 1)) * 100}%` }}
-            title={`Isolation Forest Only: ${agree.iso_only}`}
-          ></div>
-          <div
-            className="bar-segment bar-normal"
+            title={`IF Only: ${agree.iso_only}`} />
+          <div className="bar-segment bar-normal"
             style={{ width: `${(agree.both_normal / (data?.total_readings || 1)) * 100}%` }}
-            title={`Both Normal: ${agree.both_normal}`}
-          ></div>
+            title={`Both Normal: ${agree.both_normal}`} />
         </div>
 
         <div className="agreement-legend-grid">
-          <div className="legend-item">
-            <span className="dot dot-both"></span>
-            <div>
-              <strong>Both Flagged (High-Confidence):</strong> <span className="font-mono">{agree.both_flagged ?? 0}</span> readings
-            </div>
-          </div>
-          <div className="legend-item">
-            <span className="dot dot-ae"></span>
-            <div>
-              <strong>Autoencoder Only (Relational):</strong> <span className="font-mono">{agree.ae_only ?? 0}</span> readings
-            </div>
-          </div>
-          <div className="legend-item">
-            <span className="dot dot-if"></span>
-            <div>
-              <strong>Isolation Forest Only (Outlier):</strong> <span className="font-mono">{agree.iso_only ?? 0}</span> readings
-            </div>
-          </div>
-          <div className="legend-item">
-            <span className="dot dot-normal"></span>
-            <div>
-              <strong>Both Normal (Nominal State):</strong> <span className="font-mono">{agree.both_normal ?? 0}</span> readings
-            </div>
-          </div>
+          <div className="legend-item"><span className="dot dot-both"></span><div><strong>Both Flagged:</strong> <span className="font-mono">{agree.both_flagged ?? 0}</span></div></div>
+          <div className="legend-item"><span className="dot dot-ae"></span><div><strong>Autoencoder Only:</strong> <span className="font-mono">{agree.ae_only ?? 0}</span></div></div>
+          <div className="legend-item"><span className="dot dot-if"></span><div><strong>Isolation Forest Only:</strong> <span className="font-mono">{agree.iso_only ?? 0}</span></div></div>
+          <div className="legend-item"><span className="dot dot-normal"></span><div><strong>Both Normal:</strong> <span className="font-mono">{agree.both_normal ?? 0}</span></div></div>
         </div>
       </div>
 
-      {/* Plain Language Explanation Section */}
-      <div className="explanation-card">
-        <div className="explanation-header">
-          <h3>Analysis: Which Model Performs Better &amp; Why</h3>
-          <span className="badge-editable">Editable Summary</span>
-        </div>
-        <div className="explanation-body">
-          <p>
-            <strong>Performance Verdict:</strong> On this industrial dataset, the <strong>Deep Autoencoder</strong> consistently outperforms the <strong>Isolation Forest</strong>, achieving both higher recall and a superior F1-score on live streaming telemetry.
-          </p>
-          <p>
-            <strong>Technical Rationale:</strong> Industrial machine failures in the AI4I dataset (such as Heat Dissipation Failures and Overstrain Failures) are rarely simple 1-dimensional point outliers. Instead, they represent subtle violations of physical correlations between interdependent sensors — for instance, the rotational speed and torque curve or the delta between air and process temperatures.
-          </p>
-          <ul>
-            <li>
-              <strong>Isolation Forest limitation:</strong> Employs axis-aligned random splits, which detect isolated extreme values well but struggle to capture non-linear relationships across multiple sensor dimensions.
-            </li>
-            <li>
-              <strong>Autoencoder advantage:</strong> The 2-neuron bottleneck forces the neural network to compress the manifold of normal operating physics. When sensor combinations deviate from normal correlation laws, the reconstruction error increases substantially, flagging complex multi-variable faults.
-            </li>
-          </ul>
-          <p className="dim text-sm mt-2">
-            <em>Note: For production deployments, our union (OR) ensemble rule provides the safest operational posture by retaining the Autoencoder's relational sensitivity while catching any sudden point spikes isolated by the tree model.</em>
-          </p>
-        </div>
-      </div>
-
-      {/* Static Evaluation Artifacts Gallery */}
+      {/* Evaluation artifacts */}
       <div className="artifacts-gallery-section">
         <div className="gallery-header">
           <h3>Training &amp; Evaluation Artifacts</h3>
-          <p className="dim">
-            Offline visual evaluations and sensor distributions generated during model development:
-          </p>
+          <p className="dim">Offline visual evaluations generated during model development</p>
         </div>
-
         <div className="gallery-grid">
-          {/* Autoencoder Confusion Matrix */}
-          <div className="artifact-image-card">
-            <div className="artifact-card-header">
-              <h4>Autoencoder &bull; Confusion Matrix</h4>
-              <span className="badge-tag">Offline Eval</span>
+          {[
+            { src: `${API_BASE}/results/autoencoder/confusion_matrix.png`,           title: "AE · Confusion Matrix (Milling)",  tag: "Offline Eval",  caption: "Evaluated with mean + 2σ reconstruction threshold" },
+            { src: `${API_BASE}/results/autoencoder/reconstruction_error.png`,       title: "AE · Error Distribution (Milling)",tag: "MSE Error",     caption: "Normal vs anomalous separation along error scale" },
+            { src: `${API_BASE}/results/isolation_forest/confusion_matrix.png`,      title: "IF · Confusion Matrix (Milling)",  tag: "Offline Eval",  caption: "Performance at 3.4% estimated contamination rate" },
+            { src: `${API_BASE}/results/isolation_forest/score_distribution.png`,    title: "IF · Score Distribution (Milling)",tag: "Path Length",   caption: "Average anomaly score distribution across 100 trees" },
+            { src: `${API_BASE}/results/azure_pdm/ae_confusion_matrix.png`,          title: "AE · Confusion Matrix (Azure)",    tag: "Azure PdM",     caption: "4-sensor fleet telemetry autoencoder evaluation" },
+            { src: `${API_BASE}/results/azure_pdm/if_score_distribution.png`,        title: "IF · Score Distribution (Azure)",  tag: "Azure PdM",     caption: "Azure fleet anomaly score separation" },
+            { src: `${API_BASE}/results/pump_sensor/ae_confusion_matrix.png`,        title: "AE · Confusion Matrix (Pump)",     tag: "Pump Sensor",   caption: "15-sensor water pump autoencoder evaluation" },
+            { src: `${API_BASE}/results/pump_sensor/ae_reconstruction_error.png`,    title: "AE · Error Distribution (Pump)",   tag: "Pump Sensor",   caption: "Normal vs RECOVERING/BROKEN reconstruction error" },
+            { src: `${API_BASE}/results/eda/correlation_heatmap.png`,                title: "EDA · Sensor Correlation Heatmap", tag: "Exploratory",   caption: "Cross-sensor correlations including failure ground truth" },
+            { src: `${API_BASE}/results/eda/sensor_distributions.png`,               title: "EDA · Sensor Histograms",          tag: "Distribution",  caption: "Normal vs anomalous distributions (milling machine)" },
+          ].map(({ src, title, tag, caption }) => (
+            <div key={src} className="artifact-image-card">
+              <div className="artifact-card-header">
+                <h4>{title}</h4>
+                <span className="badge-tag">{tag}</span>
+              </div>
+              <div className="artifact-img-wrap">
+                <img
+                  src={src}
+                  alt={title}
+                  className="artifact-img"
+                  onError={e => { e.target.style.display = "none"; }}
+                />
+              </div>
+              <span className="artifact-caption">{caption}</span>
             </div>
-            <div className="artifact-img-wrap">
-              <img
-                src={`${API_BASE}/results/autoencoder/confusion_matrix.png`}
-                alt="Autoencoder Confusion Matrix"
-                className="artifact-img"
-                onError={(e) => { e.target.style.display = 'none'; }}
-              />
-            </div>
-            <span className="artifact-caption">Evaluated against test holdout with mean + 2σ reconstruction threshold</span>
-          </div>
-
-          {/* Autoencoder Error Distribution */}
-          <div className="artifact-image-card">
-            <div className="artifact-card-header">
-              <h4>Autoencoder &bull; Error Distribution</h4>
-              <span className="badge-tag">MSE Error</span>
-            </div>
-            <div className="artifact-img-wrap">
-              <img
-                src={`${API_BASE}/results/autoencoder/reconstruction_error.png`}
-                alt="Autoencoder Reconstruction Error"
-                className="artifact-img"
-                onError={(e) => { e.target.style.display = 'none'; }}
-              />
-            </div>
-            <span className="artifact-caption">Normal vs anomalous sample separation along the reconstruction error scale</span>
-          </div>
-
-          {/* Isolation Forest Confusion Matrix */}
-          <div className="artifact-image-card">
-            <div className="artifact-card-header">
-              <h4>Isolation Forest &bull; Confusion Matrix</h4>
-              <span className="badge-tag">Offline Eval</span>
-            </div>
-            <div className="artifact-img-wrap">
-              <img
-                src={`${API_BASE}/results/isolation_forest/confusion_matrix.png`}
-                alt="Isolation Forest Confusion Matrix"
-                className="artifact-img"
-                onError={(e) => { e.target.style.display = 'none'; }}
-              />
-            </div>
-            <span className="artifact-caption">Performance at 3.4% estimated contamination rate</span>
-          </div>
-
-          {/* Isolation Forest Score Distribution */}
-          <div className="artifact-image-card">
-            <div className="artifact-card-header">
-              <h4>Isolation Forest &bull; Score Distribution</h4>
-              <span className="badge-tag">Path Length</span>
-            </div>
-            <div className="artifact-img-wrap">
-              <img
-                src={`${API_BASE}/results/isolation_forest/score_distribution.png`}
-                alt="Isolation Forest Score Distribution"
-                className="artifact-img"
-                onError={(e) => { e.target.style.display = 'none'; }}
-              />
-            </div>
-            <span className="artifact-caption">Average anomaly score distribution across 100 trees</span>
-          </div>
-
-          {/* Sensor Correlation Heatmap */}
-          <div className="artifact-image-card">
-            <div className="artifact-card-header">
-              <h4>EDA &bull; Sensor Correlation Heatmap</h4>
-              <span className="badge-tag">Exploratory</span>
-            </div>
-            <div className="artifact-img-wrap">
-              <img
-                src={`${API_BASE}/results/eda/correlation_heatmap.png`}
-                alt="Sensor Correlation Heatmap"
-                className="artifact-img"
-                onError={(e) => { e.target.style.display = 'none'; }}
-              />
-            </div>
-            <span className="artifact-caption">Cross-sensor correlations including failure ground truth</span>
-          </div>
-
-          {/* Sensor Distributions */}
-          <div className="artifact-image-card">
-            <div className="artifact-card-header">
-              <h4>EDA &bull; Sensor Histograms</h4>
-              <span className="badge-tag">Distribution</span>
-            </div>
-            <div className="artifact-img-wrap">
-              <img
-                src={`${API_BASE}/results/eda/sensor_distributions.png`}
-                alt="Sensor Distributions"
-                className="artifact-img"
-                onError={(e) => { e.target.style.display = 'none'; }}
-              />
-            </div>
-            <span className="artifact-caption">Normal vs anomalous distributions across all 5 physical parameters</span>
-          </div>
+          ))}
         </div>
       </div>
     </div>
