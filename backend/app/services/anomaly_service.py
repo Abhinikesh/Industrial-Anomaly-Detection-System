@@ -80,9 +80,26 @@ _MACHINE_MODEL_PATHS: Dict[str, dict] = {
         "feature_order": ["voltage", "rotation", "pressure", "vibration"],
         "n_features": 4,
     },
+    # Pump Sensor Data — single industrial water pump (15 sensors selected by correlation)
+    # Trained by:  python ml/train_pump_models.py
+    # Dataset:     nphantawee/pump-sensor-data (Kaggle)
+    # Features:    top-15 sensors from sensor_00…sensor_51 (see autoencoder_threshold.json)
+    # Note: feature_order is populated at load time from the saved threshold JSON so that
+    #       the exact sensor list is always in sync with the trained model artefacts.
+    "water_pump": {
+        "iso_path":    os.path.join(MODEL_DIR, "pump/isolation_forest.pkl"),
+        "scaler_path": os.path.join(MODEL_DIR, "pump/scaler.pkl"),
+        "ae_path":     os.path.join(MODEL_DIR, "pump/autoencoder.pt"),
+        "thresh_path": os.path.join(MODEL_DIR, "pump/autoencoder_threshold.json"),
+        # feature_order is loaded from thresh_path at startup (set to None here
+        # so load_models_safely knows to read it from the JSON file)
+        "feature_order": None,
+        "n_features": None,   # resolved from scaler at load time
+    },
     # Add future machine types here following the same pattern.
     # Each type needs its own trained artefacts in a subdirectory of models/.
 }
+
 
 
 # ── Runtime model registry (populated by load_models_safely) ─────────────────
@@ -130,30 +147,43 @@ def _load_single_type(machine_type: str, paths: dict) -> None:
         iso    = joblib.load(iso_path)
         scaler = joblib.load(scaler_path)
 
-        ae_model = SensorAutoencoder(n_features=paths["n_features"])
+        # Load the threshold JSON first — it also stores feature_order for
+        # types (like water_pump) that don't hardcode it in _MACHINE_MODEL_PATHS.
+        with open(thresh_path) as f:
+            thresh_data  = json.load(f)
+        ae_threshold  = thresh_data["threshold"]
+
+        # Resolve feature_order: prefer the hardcoded list from _MACHINE_MODEL_PATHS
+        # (guaranteed correct), fall back to the list saved in the threshold JSON.
+        feature_order = paths.get("feature_order") or thresh_data.get("features")
+
+        # Resolve n_features: prefer hardcoded, else derive from scaler.
+        n_features = paths.get("n_features") or (
+            scaler.n_features_in_ if hasattr(scaler, "n_features_in_") else len(feature_order)
+        )
+
+        ae_model = SensorAutoencoder(n_features=n_features)
         ae_model.load_state_dict(
             torch.load(ae_path, map_location="cpu", weights_only=True)
         )
         ae_model.eval()
-
-        with open(thresh_path) as f:
-            ae_threshold = json.load(f)["threshold"]
 
         _MODEL_REGISTRY[machine_type] = {
             "iso":          iso,
             "scaler":       scaler,
             "ae":           ae_model,
             "ae_threshold": ae_threshold,
-            "feature_order": paths["feature_order"],
+            "feature_order": feature_order,
         }
         print(
             f"[anomaly_service] ✓ Models loaded for machine_type='{machine_type}' "
-            f"(IF + AE, threshold={ae_threshold:.5f})"
+            f"(IF + AE, {n_features} features, threshold={ae_threshold:.5f})"
         )
     except Exception as err:
         msg = f"Error loading models for '{machine_type}': {err}"
         _registry_errors[machine_type] = msg
         print(f"[anomaly_service] ⚠️  {msg}")
+
 
 
 # Initial load at module import
