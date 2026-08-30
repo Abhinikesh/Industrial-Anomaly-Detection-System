@@ -2,7 +2,7 @@ import os
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
-OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "../../report_assets")
+OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "../../../docs")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 IMG_PATH = os.path.join(OUTPUT_DIR, "architecture_diagram.png")
 

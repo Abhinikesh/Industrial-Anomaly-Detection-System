@@ -1,5 +1,5 @@
 """
-Generates the Model Evaluation Summary report asset (report_assets/model_metrics.md).
+Generates the Model Evaluation Summary report asset (docs/model_metrics.md).
 Aggregates training evaluation benchmarks and live streaming MongoDB performance metrics.
 """
 
@@ -9,11 +9,11 @@ from datetime import datetime, timezone
 
 # Add backend directory to path
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(BASE_DIR, ".."))
+sys.path.insert(0, os.path.join(BASE_DIR, "../.."))
 
 from app.services.reading_service import get_model_comparison_stats
 
-OUTPUT_PATH = os.path.join(BASE_DIR, "../../report_assets/model_metrics.md")
+OUTPUT_PATH = os.path.join(BASE_DIR, "../../../docs/model_metrics.md")
 os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
 
 

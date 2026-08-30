@@ -1,8 +1,8 @@
 # Model Evaluation Summary & Comparative Analysis
 
-**Generated:** 2026-08-17 17:22:48 UTC  
+**Generated:** 2026-08-30 08:35:03 UTC  
 **Dataset:** AI4I 2020 Predictive Maintenance Dataset (10,000 synthetic sensor records)  
-**Evaluated Live Stream Sample:** 705 telemetry packets ingested into MongoDB (17 actual failure events)
+**Evaluated Live Stream Sample:** 7,651 telemetry packets ingested into MongoDB (302 actual failure events)
 
 ---
 
@@ -11,13 +11,13 @@
 | Evaluation Metric | 🌲 Isolation Forest | 🧠 Deep Autoencoder | Delta / Winning Model |
 |---|:---:|:---:|:---:|
 | **Training Offline F1** | `0.168` | **`0.285`** | **Autoencoder (+69.6%)** |
-| **Live Stream Precision** | `0.545` | `0.524` | Balanced (~52.4%) |
-| **Live Stream Recall** | `0.353` | **`0.647`** | **Autoencoder (+29.4%)** |
-| **Live Stream F1-Score** | `0.428` | **`0.579`** | **Autoencoder (Higher overall balance)** |
-| **True Positives (TP)** | `6` | `11` | AE caught more true physical failures |
-| **False Positives (FP)** | `5` | `10` | Acceptable false alarm rate |
-| **False Negatives (FN)** | `11` | `6` | AE has fewer catastrophic misses |
-| **Telemetry Trigger Rate** | `1.56%` (11 events) | `2.98%` (21 events) | Aligned with ~3.4% ground-truth failure rate |
+| **Live Stream Precision** | `0.191` | `0.235` | Balanced (~23.5%) |
+| **Live Stream Recall** | `0.205` | **`0.328`** | **Autoencoder (+12.3%)** |
+| **Live Stream F1-Score** | `0.198` | **`0.274`** | **Autoencoder (Higher overall balance)** |
+| **True Positives (TP)** | `62` | `99` | AE caught more true physical failures |
+| **False Positives (FP)** | `263` | `322` | Acceptable false alarm rate |
+| **False Negatives (FN)** | `240` | `203` | AE has fewer catastrophic misses |
+| **Telemetry Trigger Rate** | `4.25%` (325 events) | `5.5%` (421 events) | Aligned with ~3.4% ground-truth failure rate |
 
 ---
 
@@ -36,7 +36,7 @@
 - **Decision Threshold:** Statistically calibrated to:
   $$\text{Threshold} = \mu_{\text{normal}} + 2\sigma_{\text{normal}} = 0.62011$$
 - **Strengths:** Because the 2-neuron bottleneck compresses the manifold of nominal machine physics, any reading that violates physical sensor interdependencies produces high reconstruction error. This enables the model to catch complex multi-variable failure modes (such as Heat Dissipation Failure and Overstrain Failure).
-- **Outcome:** Substantially higher recall (64.7% vs 35.3%), critical in industrial equipment where missing a failure results in costly unplanned machine downtime.
+- **Outcome:** Substantially higher recall (32.8% vs 20.5%), critical in industrial equipment where missing a failure results in costly unplanned machine downtime.
 
 ---
 
@@ -44,11 +44,11 @@
 
 During live telemetry streaming from the sensor simulator, model agreement statistics in MongoDB indicate:
 
-- **Overall Agreement Rate:** **`97.73%`** (689 of 705 readings)
-- **Consensus Normal Readings:** `681` readings (both models agreed system state was healthy)
-- **Consensus Anomalies (High-Confidence):** `8` readings (both models concurrently triggered alert flags)
-- **Autoencoder-Only Detections:** `13` readings (caught multi-sensor correlation drift that Isolation Forest missed)
-- **Isolation Forest-Only Detections:** `3` readings (caught sharp 1D point spikes)
+- **Overall Agreement Rate:** **`92.92%`** (7,109 of 7,651 readings)
+- **Consensus Normal Readings:** `7,007` readings (both models agreed system state was healthy)
+- **Consensus Anomalies (High-Confidence):** `102` readings (both models concurrently triggered alert flags)
+- **Autoencoder-Only Detections:** `319` readings (caught multi-sensor correlation drift that Isolation Forest missed)
+- **Isolation Forest-Only Detections:** `223` readings (caught sharp 1D point spikes)
 
 ---
 
